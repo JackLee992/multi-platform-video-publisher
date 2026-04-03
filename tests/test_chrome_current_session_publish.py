@@ -187,3 +187,30 @@ def test_current_session_script_verifies_wechat_cover_after_upload() -> None:
     assert "verify_wechat_channels_cover" in content
     assert ".cover-preview-wrap .vertical-img-size.cover-img-vertical" in content
     assert "cover_verified" in content
+
+
+def test_current_session_script_supports_douyin_cover_modal_flow() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "apply_douyin_cover" in content
+    assert "设置横封面" in content
+    assert "semi-upload upload-BvM5FF" in content
+    assert "douyin_cover_uploaded" in content
+
+
+def test_current_session_script_verifies_douyin_cover_after_upload() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "verify_douyin_cover" in content
+    assert "横/竖双封面缺失" in content
+    assert "douyin_cover_verified" in content

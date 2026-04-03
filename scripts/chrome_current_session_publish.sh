@@ -646,6 +646,69 @@ return "{\"ok\":false,\"error\":\"missing title input\"}"
 APPLESCRIPT
 }
 
+apply_douyin_cover() {
+  if [[ -z "$COVER_FILE" ]]; then
+    echo "{\"ok\":true,\"action\":\"no_cover_path\"}"
+    return 0
+  fi
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 45 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+          set js to "window.__codexDouyinCover='starting'; (async () => { try { const bytesFromBase64 = (value) => Uint8Array.from(atob(value), c => c.charCodeAt(0)); const clickByExactText = (text) => { const target = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (!target) return false; target.click(); return true; }; const clickNthChooseCover = (index) => { const targets = Array.from(document.querySelectorAll('button,div,span')).filter(el => (el.innerText || '').trim() === '选择封面'); const target = targets[index]; if (!target) return false; target.click(); return true; }; const uploadInput = () => Array.from(document.querySelectorAll('input[type=file]')).find(el => ((el.parentElement && (el.parentElement.className || '').includes('semi-upload upload-BvM5FF')) || (el.className || '').includes('semi-upload-hidden-input')) && (el.accept || '').includes('image/png')) || document.querySelector('.semi-upload.upload-BvM5FF input[type=file]'); const assignCover = () => { const input = uploadInput(); if (!input) throw new Error('missing douyin cover input'); const bytes = bytesFromBase64('${COVER_BASE64}'); const file = new File([bytes], '${COVER_FILE}', {type: 'image/jpeg'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); return input.files.length; }; if (!clickNthChooseCover(0)) throw new Error('missing douyin choose cover'); await new Promise(resolve => setTimeout(resolve, 800)); const firstFiles = assignCover(); await new Promise(resolve => setTimeout(resolve, 1200)); clickByExactText('保存'); await new Promise(resolve => setTimeout(resolve, 1200)); clickByExactText('设置横封面'); await new Promise(resolve => setTimeout(resolve, 800)); const secondFiles = assignCover(); await new Promise(resolve => setTimeout(resolve, 1200)); clickByExactText('保存'); await new Promise(resolve => setTimeout(resolve, 1200)); clickByExactText('完成'); await new Promise(resolve => setTimeout(resolve, 1200)); window.__codexDouyinCover = JSON.stringify({ok:true, action:'douyin_cover_uploaded', files:firstFiles + secondFiles}); } catch (error) { window.__codexDouyinCover = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
+          return execute t javascript js
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "timeout"
+APPLESCRIPT
+}
+
+poll_douyin_cover() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 25 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+          set resultJson to execute t javascript "window.__codexDouyinCover || ''"
+          if resultJson is not "" and resultJson is not "starting" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "timeout"
+end tell
+APPLESCRIPT
+}
+
+verify_douyin_cover() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 30 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+          set js to "(() => { const bodyText = (document.body && document.body.innerText) || ''; const warningMissing = !bodyText.includes('横/竖双封面缺失'); const modalClosed = !Array.from(document.querySelectorAll('button,div,span')).some(el => (el.innerText || '').trim() === '设置横封面'); const previewBlobCount = Array.from(document.querySelectorAll('img')).filter(img => ((img.getAttribute('src') || img.src || '').startsWith('blob:'))).length; if (warningMissing) return JSON.stringify({ok:true, action:'douyin_cover_verified', previewBlobCount, modalClosed}); return JSON.stringify({ok:false, error:'douyin_cover_not_verified', previewBlobCount, modalClosed}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"action\":\"douyin_cover_verified\"" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "{\"ok\":false,\"error\":\"douyin_cover_not_verified\"}"
+end tell
+APPLESCRIPT
+}
+
 publish_douyin() {
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
@@ -889,6 +952,10 @@ run_platform() {
       focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_douyin
+      echo "[${platform_name}] cover_start"
+      apply_douyin_cover
+      poll_douyin_cover
+      verify_douyin_cover
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
         echo "[${platform_name}] publish_start"
         publish_douyin
