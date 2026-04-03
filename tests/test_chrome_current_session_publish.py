@@ -51,6 +51,8 @@ def test_run_current_session_publish_script_builds_autopublish_command(
     assert draft.selected_title in command
     assert "--description" in command
     assert draft.summary in command
+    assert "--cover" in command
+    assert str(draft.selected_cover_path) in command
     assert "--platform" in command
     assert PlatformName.XIAOHONGSHU.value in command
     assert "--skip-publish" not in command
@@ -144,3 +146,18 @@ def test_current_session_script_handles_wechat_dialogs_and_current_placeholder()
     assert "handle_wechat_channels_dialogs()" in content
     assert "将此次编辑保留?" in content
     assert "概括视频主要内容，字数建议6-16个字符" in content
+
+
+def test_current_session_script_supports_cover_and_description_fill_paths() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "--cover PATH" in content
+    assert "fill_xiaohongshu_description" in content
+    assert "apply_xiaohongshu_cover" in content
+    assert "fill_wechat_channels_description" in content
+    assert "apply_wechat_channels_cover" in content

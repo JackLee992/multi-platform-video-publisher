@@ -26,6 +26,8 @@ def run_current_session_publish_script(
         "--platform",
         platform_name.value,
     ]
+    if draft.selected_cover_path is not None:
+        command.extend(["--cover", str(draft.selected_cover_path)])
     if draft.execution_mode is ExecutionMode.AUTOFILL_ONLY:
         command.append("--skip-publish")
     subprocess.run(command, check=True)

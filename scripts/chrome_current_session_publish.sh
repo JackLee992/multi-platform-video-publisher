@@ -12,6 +12,7 @@ Usage:
 
 Options:
   --video PATH           Absolute path to local video file
+  --cover PATH           Optional absolute path to local cover image
   --title TEXT           Shared title used across platforms
   --description TEXT     Optional description. Defaults to title
   --platform NAME        xiaohongshu | douyin | wechat_channels | all
@@ -31,6 +32,7 @@ EOF
 }
 
 VIDEO_PATH=""
+COVER_PATH=""
 TITLE=""
 DESCRIPTION=""
 PLATFORM="all"
@@ -40,6 +42,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --video)
       VIDEO_PATH="$2"
+      shift 2
+      ;;
+    --cover)
+      COVER_PATH="$2"
       shift 2
       ;;
     --title)
@@ -88,6 +94,11 @@ if [[ -z "$DESCRIPTION" ]]; then
   DESCRIPTION="$TITLE"
 fi
 
+if [[ -n "$COVER_PATH" && ! -f "$COVER_PATH" ]]; then
+  echo "Cover not found: $COVER_PATH" >&2
+  exit 1
+fi
+
 js_quote() {
   python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
 }
@@ -115,10 +126,18 @@ js_to_base64() {
 
 VIDEO_DIR="$(cd "$(dirname "$VIDEO_PATH")" && pwd)"
 VIDEO_FILE="$(basename "$VIDEO_PATH")"
+COVER_FILE=""
+ASSET_DIR=""
 
 ensure_server() {
+  ASSET_DIR="$(mktemp -d /tmp/chrome-current-session-assets.XXXXXX)"
+  ln -sf "$VIDEO_PATH" "$ASSET_DIR/$VIDEO_FILE"
+  if [[ -n "$COVER_PATH" ]]; then
+    COVER_FILE="$(basename "$COVER_PATH")"
+    ln -sf "$COVER_PATH" "$ASSET_DIR/$COVER_FILE"
+  fi
   if ! lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-    python3 -m http.server "$PORT" --bind "$HOST" --directory "$VIDEO_DIR" >/tmp/chrome-current-session-publish.log 2>&1 &
+    python3 -m http.server "$PORT" --bind "$HOST" --directory "$ASSET_DIR" >/tmp/chrome-current-session-publish.log 2>&1 &
     SERVER_PID=$!
     sleep 1
   else
@@ -129,6 +148,9 @@ ensure_server() {
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]]; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${ASSET_DIR:-}" && -d "${ASSET_DIR:-}" ]]; then
+    rm -rf "$ASSET_DIR"
   fi
 }
 
@@ -454,6 +476,42 @@ return "{\"ok\":false,\"error\":\"missing title input\"}"
 APPLESCRIPT
 }
 
+fill_xiaohongshu_description() {
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 45 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+          set js to "(() => { const desc = ${JS_DESCRIPTION_LITERAL}; const editor = document.querySelector('[contenteditable=true]'); if (!editor) return JSON.stringify({ok:false,error:'missing description editor'}); editor.focus(); editor.innerHTML = ''; editor.textContent = desc; editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: desc })); editor.dispatchEvent(new Event('change', { bubbles: true })); editor.dispatchEvent(new Event('blur', { bubbles: true })); return JSON.stringify({ok:true, description:editor.innerText}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"ok\":true" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "{\"ok\":false,\"error\":\"missing description editor\"}"
+APPLESCRIPT
+}
+
+apply_xiaohongshu_cover() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat with w in windows
+    repeat with t in tabs of w
+      if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+        set js to "(() => { const prefer = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === '智能推荐封面'); if (prefer) { prefer.click(); return JSON.stringify({ok:true, action:'smart_cover_clicked'}); } const header = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === '设置封面' || (el.innerText || '').trim() === '修改封面'); if (header) { header.click(); return JSON.stringify({ok:true, action:'cover_panel_opened'}); } return JSON.stringify({ok:true, action:'default_cover_retained'}); })()"
+        return execute t javascript js
+      end if
+    end repeat
+  end repeat
+end tell
+return "{\"ok\":true,\"action\":\"not_found\"}"
+APPLESCRIPT
+}
+
 publish_xiaohongshu() {
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
@@ -643,6 +701,68 @@ return "{\"ok\":false,\"error\":\"missing short title input\"}"
 APPLESCRIPT
 }
 
+fill_wechat_channels_description() {
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 45 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; const desc = ${JS_DESCRIPTION_LITERAL}; const editor = root.querySelector('.post-desc-box .input-editor'); if (!editor) return JSON.stringify({ok:false,error:'missing description editor'}); editor.focus(); editor.innerHTML = ''; editor.textContent = desc; editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: desc })); editor.dispatchEvent(new Event('change', { bubbles: true })); editor.dispatchEvent(new Event('blur', { bubbles: true })); return JSON.stringify({ok:true, description:editor.innerText}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"ok\":true" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "{\"ok\":false,\"error\":\"missing description editor\"}"
+APPLESCRIPT
+}
+
+apply_wechat_channels_cover() {
+  if [[ -z "$COVER_FILE" ]]; then
+    echo "{\"ok\":true,\"action\":\"no_cover_path\"}"
+    return 0
+  fi
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 45 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "window.__codexWxCover='starting'; (async () => { try { const root = document.querySelector('wujie-app')?.shadowRoot || document; const clickByText = (text) => { const target = Array.from(root.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (!target) return false; target.click(); return true; }; clickByText('编辑'); clickByText('上传封面'); const inputs = Array.from(root.querySelectorAll('input[type=file]')); const input = inputs[inputs.length - 1]; if (!input) throw new Error('missing cover input'); const res = await fetch('http://${HOST}:${PORT}/${COVER_FILE}'); const blob = await res.blob(); const file = new File([blob], '${COVER_FILE}', {type: blob.type || 'image/jpeg'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); setTimeout(() => { clickByText('确定'); clickByText('确认'); }, 1200); window.__codexWxCover = JSON.stringify({ok:true, action:'cover_uploaded', files: input.files.length}); } catch (error) { window.__codexWxCover = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
+          return execute t javascript js
+        end if
+      end repeat
+    end repeat
+  end repeat
+end tell
+return "NOT_FOUND"
+APPLESCRIPT
+}
+
+poll_wechat_channels_cover() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 25 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set resultJson to execute t javascript "window.__codexWxCover || ''"
+          if resultJson is not "" and resultJson is not "starting" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "timeout"
+end tell
+APPLESCRIPT
+}
+
 publish_wechat_channels() {
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
@@ -689,6 +809,10 @@ run_platform() {
       focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_xiaohongshu
+      echo "[${platform_name}] description_start"
+      fill_xiaohongshu_description
+      echo "[${platform_name}] cover_start"
+      apply_xiaohongshu_cover
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
         echo "[${platform_name}] publish_start"
         publish_xiaohongshu
@@ -725,6 +849,11 @@ run_platform() {
       focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_wechat_channels
+      echo "[${platform_name}] description_start"
+      fill_wechat_channels_description
+      echo "[${platform_name}] cover_start"
+      apply_wechat_channels_cover
+      poll_wechat_channels_cover
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
         echo "[${platform_name}] publish_start"
         publish_wechat_channels
