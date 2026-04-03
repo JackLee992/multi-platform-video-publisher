@@ -274,7 +274,7 @@
               <span>立即发布</span>
             </label>
 
-            <button type="submit" class="button">保存确认</button>
+            <button type="submit" class="button">保存并执行</button>
             <p id="save-status"></p>
           </form>
 
@@ -315,7 +315,7 @@
             {% endfor %}
           </div>
 
-          <h2 style="margin-top: 22px;">Run Console</h2>
+          <h2 style="margin-top: 22px;">执行控制台</h2>
           <div class="suggestion-list">
             <div class="chip">
               <div>当前状态：<span id="run-state-status">idle</span></div>
@@ -328,11 +328,11 @@
                 id="run-button"
                 {% if draft.approval_status.value != "approved" %}disabled{% endif %}
               >
-                Run
+                执行
               </button>
               <span class="hint" id="run-hint">
                 {% if draft.approval_status.value != "approved" %}
-                请先保存确认
+                请先保存并执行
                 {% else %}
                 已批准，可直接执行
                 {% endif %}
@@ -356,6 +356,7 @@
       const coverFileInput = document.getElementById("cover_file");
       const uploadCoverButton = document.getElementById("upload-cover-button");
       const runButton = document.getElementById("run-button");
+      const runHint = document.getElementById("run-hint");
       const runStateStatus = document.getElementById("run-state-status");
       const runLog = document.getElementById("run-log");
       const runResults = document.getElementById("run-results");
@@ -416,30 +417,65 @@
         }
         selectedCoverPathInput.value = data.cover_path;
         syncSelectedCoverState();
-        saveStatus.textContent = "封面已上传，可直接保存确认";
+        saveStatus.textContent = "封面已上传，可直接保存并执行";
       });
 
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
+      const buildApprovalPayload = () => {
         const selectedPlatforms = Array.from(
           form.querySelectorAll('input[name="selected_platforms"]:checked')
         ).map((element) => element.value);
-        const payload = {
+        return {
           selected_title: form.selected_title.value,
           selected_cover_path: form.selected_cover_path.value,
           selected_platforms: selectedPlatforms,
           publish_now: form.publish_now.checked,
           execution_mode: form.querySelector('input[name="execution_mode"]:checked').value,
         };
-        const response = await fetch("/api/drafts/{{ draft.draft_id }}/approval", {
+      };
+
+      const saveApproval = async () => {
+        const payload = buildApprovalPayload();
+        return fetch("/api/drafts/{{ draft.draft_id }}/approval", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+      };
+
+      const executeRun = async () => {
+        runButton.disabled = true;
+        runButton.textContent = "执行中...";
+        runHint.textContent = "正在执行，请稍候";
+        const response = await fetch("/api/drafts/{{ draft.draft_id }}/run", {
+          method: "POST",
+        });
         const data = await response.json();
-        saveStatus.textContent = response.ok
-          ? `已保存：${data.approval_status} / ${data.publish_mode}`
-          : `保存失败：${data.detail || "unknown error"}`;
+        if (!response.ok) {
+          saveStatus.textContent = `执行失败：${data.detail || "unknown error"}`;
+          runButton.disabled = false;
+          runButton.textContent = "执行";
+          runHint.textContent = "执行失败，可修正后重试";
+          return;
+        }
+        await pollRunStatus();
+        runButton.disabled = false;
+        runButton.textContent = "执行";
+        runHint.textContent = "执行完成，可继续重试或查看结果";
+      };
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        saveStatus.textContent = "正在保存并启动执行...";
+        const response = await saveApproval();
+        const data = await response.json();
+        if (!response.ok) {
+          saveStatus.textContent = `保存失败：${data.detail || "unknown error"}`;
+          return;
+        }
+        saveStatus.textContent = `已保存：${data.approval_status} / ${data.publish_mode}，开始执行`;
+        runButton.disabled = false;
+        runHint.textContent = "已批准，可直接执行";
+        await executeRun();
       });
 
       Array.from(document.querySelectorAll(".retry-button")).forEach((button) => {
@@ -485,21 +521,7 @@
       };
 
       runButton?.addEventListener("click", async () => {
-        runButton.disabled = true;
-        runButton.textContent = "Running...";
-        const response = await fetch("/api/drafts/{{ draft.draft_id }}/run", {
-          method: "POST",
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          saveStatus.textContent = `执行失败：${data.detail || "unknown error"}`;
-          runButton.disabled = false;
-          runButton.textContent = "Run";
-          return;
-        }
-        await pollRunStatus();
-        runButton.disabled = false;
-        runButton.textContent = "Run";
+        await executeRun();
       });
 
       pollRunStatus();

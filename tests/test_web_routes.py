@@ -37,7 +37,8 @@ def test_draft_detail_template_contains_expected_heading() -> None:
     assert "最终封面" in content
     assert "立即发布" in content
     assert "执行模式" in content
-    assert "Run Console" in content
+    assert "执行控制台" in content
+    assert "保存并执行" in content
     assert 'id="run-button"' in content
     assert 'id="run-log"' in content
 
@@ -57,7 +58,8 @@ def test_draft_detail_shows_real_draft_confirmation_fields(tmp_path, monkeypatch
     assert "立即发布" in response.text
     assert "执行模式" in response.text
     assert "发布历史" in response.text
-    assert "Run Console" in response.text
+    assert "执行控制台" in response.text
+    assert "保存并执行" in response.text
     assert draft.summary in response.text
     assert draft.title_suggestions[0] in response.text
 
