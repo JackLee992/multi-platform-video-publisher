@@ -152,6 +152,14 @@
         color: var(--muted);
         font-size: 13px;
       }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SFMono-Regular", "Menlo", monospace;
+        font-size: 12px;
+        line-height: 1.5;
+      }
       #save-status {
         min-height: 24px;
         color: var(--success);
@@ -306,6 +314,35 @@
             </button>
             {% endfor %}
           </div>
+
+          <h2 style="margin-top: 22px;">Run Console</h2>
+          <div class="suggestion-list">
+            <div class="chip">
+              <div>当前状态：<span id="run-state-status">idle</span></div>
+              <div>当前模式：<span id="run-state-mode">{{ draft.execution_mode.value }}</span></div>
+            </div>
+            <div class="inline-row">
+              <button
+                type="button"
+                class="button"
+                id="run-button"
+                {% if draft.approval_status.value != "approved" %}disabled{% endif %}
+              >
+                Run
+              </button>
+              <span class="hint" id="run-hint">
+                {% if draft.approval_status.value != "approved" %}
+                请先保存确认
+                {% else %}
+                已批准，可直接执行
+                {% endif %}
+              </span>
+            </div>
+            <div class="chip">
+              <pre id="run-log">等待执行...</pre>
+            </div>
+            <div id="run-results" class="suggestion-list"></div>
+          </div>
         </section>
       </div>
     </div>
@@ -318,6 +355,10 @@
       const titleButtons = Array.from(document.querySelectorAll(".title-option"));
       const coverFileInput = document.getElementById("cover_file");
       const uploadCoverButton = document.getElementById("upload-cover-button");
+      const runButton = document.getElementById("run-button");
+      const runStateStatus = document.getElementById("run-state-status");
+      const runLog = document.getElementById("run-log");
+      const runResults = document.getElementById("run-results");
 
       const syncSelectedCoverState = () => {
         coverCards.forEach((card) => {
@@ -418,6 +459,50 @@
             : `重试失败：${data.detail || "unknown error"}`;
         });
       });
+
+      const renderRunState = (state) => {
+        runStateStatus.textContent = state.status || "idle";
+        runLog.textContent = (state.logs || [])
+          .map((entry) => `[${entry.created_at}] ${entry.level}: ${entry.message}`)
+          .join("\n") || "等待执行...";
+        runResults.innerHTML = (state.results || []).map((result) => `
+          <div class="chip">
+            <div>${result.platform_name} / ${result.status}</div>
+            <div>信号：${result.success_signal || "none"}</div>
+            <div>结果地址：${result.result_url || "none"}</div>
+            <div>错误：${result.error_message || "none"}</div>
+          </div>
+        `).join("");
+      };
+
+      const pollRunStatus = async () => {
+        const response = await fetch("/api/drafts/{{ draft.draft_id }}/run-status");
+        const data = await response.json();
+        renderRunState(data);
+        if (data.status === "running") {
+          window.setTimeout(pollRunStatus, 1500);
+        }
+      };
+
+      runButton?.addEventListener("click", async () => {
+        runButton.disabled = true;
+        runButton.textContent = "Running...";
+        const response = await fetch("/api/drafts/{{ draft.draft_id }}/run", {
+          method: "POST",
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          saveStatus.textContent = `执行失败：${data.detail || "unknown error"}`;
+          runButton.disabled = false;
+          runButton.textContent = "Run";
+          return;
+        }
+        await pollRunStatus();
+        runButton.disabled = false;
+        runButton.textContent = "Run";
+      });
+
+      pollRunStatus();
     </script>
   </body>
 </html>

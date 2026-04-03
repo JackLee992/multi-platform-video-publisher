@@ -37,6 +37,9 @@ def test_draft_detail_template_contains_expected_heading() -> None:
     assert "最终封面" in content
     assert "立即发布" in content
     assert "执行模式" in content
+    assert "Run Console" in content
+    assert 'id="run-button"' in content
+    assert 'id="run-log"' in content
 
 
 def test_draft_detail_shows_real_draft_confirmation_fields(tmp_path, monkeypatch) -> None:
@@ -54,8 +57,78 @@ def test_draft_detail_shows_real_draft_confirmation_fields(tmp_path, monkeypatch
     assert "立即发布" in response.text
     assert "执行模式" in response.text
     assert "发布历史" in response.text
+    assert "Run Console" in response.text
     assert draft.summary in response.text
     assert draft.title_suggestions[0] in response.text
+
+
+def test_run_endpoint_rejects_unapproved_draft(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MVPUBLISHER_HOME", str(tmp_path / "runtime"))
+    repository = DraftRepository((tmp_path / "runtime") / "drafts")
+    draft = repository.save(_build_draft(tmp_path))
+    client = TestClient(create_app())
+
+    response = client.post(f"/api/drafts/{draft.draft_id}/run")
+
+    assert response.status_code == 400
+    assert "approved" in response.json()["detail"]
+
+
+def test_run_endpoint_writes_run_state_and_returns_status(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MVPUBLISHER_HOME", str(tmp_path / "runtime"))
+    repository = DraftRepository((tmp_path / "runtime") / "drafts")
+    cover = tmp_path / "selected-cover.jpg"
+    cover.write_text("cover", encoding="utf-8")
+    draft = repository.save(
+        _build_draft(tmp_path).model_copy(
+            update={
+                "selected_title": "最终标题",
+                "selected_cover_path": cover,
+                "selected_platforms": [PlatformName.DOUYIN],
+                "approval_status": DraftApprovalStatus.APPROVED,
+            }
+        )
+    )
+
+    class FakePublisher:
+        platform_name = PlatformName.DOUYIN.value
+
+        def publish(self, draft, session_resolution, artifact_root):
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            result = PublishResult(
+                platform_name=self.platform_name,
+                status="awaiting_manual_publish",
+                submitted=False,
+                result_url="https://creator.douyin.com/creator-micro/content/post/video",
+                error_message=None,
+                execution_mode=draft.execution_mode,
+                awaiting_manual_publish=True,
+                success_signal="editor_ready",
+            )
+            result.write(artifact_root)
+            return result
+
+    client = TestClient(
+        create_app(
+            repository=repository,
+            publishers={PlatformName.DOUYIN: FakePublisher()},
+            session_factory=lambda platform_name: {"platform": platform_name.value},
+        )
+    )
+
+    response = client.post(f"/api/drafts/{draft.draft_id}/run")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["draft_id"] == draft.draft_id
+    assert payload["status"] in {"running", "success", "partial", "failed"}
+
+    status_response = client.get(f"/api/drafts/{draft.draft_id}/run-status")
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["draft_id"] == draft.draft_id
+    assert "logs" in status_payload
+    assert "results" in status_payload
 
 
 def test_approval_api_persists_selected_values(tmp_path, monkeypatch) -> None:

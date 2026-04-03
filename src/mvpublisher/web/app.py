@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import base64
 from pathlib import Path
 from typing import Callable, Mapping, Optional
@@ -20,6 +21,12 @@ from mvpublisher.publishers import (
 from mvpublisher.sessions import PlatformSessionRequest, resolve_session
 from mvpublisher.storage.drafts import DraftRepository
 from mvpublisher.workflows import publish_draft_from_repository
+from mvpublisher.web.run_console import (
+    RunConsoleLogEntry,
+    RunConsolePlatformResult,
+    RunConsoleState,
+    RunConsoleStore,
+)
 
 
 class ApprovalPayload(BaseModel):
@@ -54,6 +61,7 @@ def create_app(
     app = FastAPI()
     config = AppConfig.from_env()
     repository = repository or DraftRepository(config.home_dir / "drafts")
+    run_console_store = RunConsoleStore(config.home_dir / "artifacts")
     approval_service = ApprovalService()
     publishers = publishers or _default_publishers()
     session_factory = session_factory or (
@@ -136,6 +144,82 @@ def create_app(
             "status": result.status,
         }
 
+    @app.post("/api/drafts/{draft_id}/run")
+    async def run_draft(draft_id: str):
+        draft = repository.load(draft_id)
+        if not approval_service.is_approved(draft):
+            raise HTTPException(status_code=400, detail="Draft must be approved before run")
+
+        state = RunConsoleState(
+            draft_id=draft_id,
+            status="running",
+            execution_mode=draft.execution_mode,
+            logs=[
+                RunConsoleLogEntry(level="info", message="run requested"),
+                RunConsoleLogEntry(level="info", message="publish workflow started"),
+            ],
+        )
+        run_console_store.save_latest(state)
+
+        results = []
+        for platform in draft.selected_platforms:
+            state.logs.append(
+                RunConsoleLogEntry(
+                    level="info",
+                    message=f"{platform.value} execution started",
+                )
+            )
+            run_console_store.save_latest(state)
+
+        saved_draft, results = publish_draft_from_repository(
+            draft_id=draft_id,
+            repository=repository,
+            publishers=publishers,
+            session_factory=session_factory,
+        )
+
+        state.results = [
+            RunConsolePlatformResult(
+                platform_name=PlatformName(result.platform_name),
+                status=result.status,
+                success_signal=result.success_signal,
+                result_url=result.result_url,
+                error_message=result.error_message,
+                finished_at=result.finished_at,
+            )
+            for result in results
+        ]
+        for result in state.results:
+            state.logs.append(
+                RunConsoleLogEntry(
+                    level="info",
+                    message=f"{result.platform_name.value} execution finished: {result.status}",
+                )
+            )
+        state.logs.append(RunConsoleLogEntry(level="info", message="publish workflow finished"))
+        state.finished_at = datetime.now(timezone.utc)
+        state.status = _compute_run_status(state.results)
+        run_console_store.save_latest(state)
+
+        return {
+            "draft_id": saved_draft.draft_id,
+            "status": state.status,
+            "execution_mode": saved_draft.execution_mode.value,
+        }
+
+    @app.get("/api/drafts/{draft_id}/run-status")
+    async def run_status(draft_id: str):
+        repository.load(draft_id)
+        state = run_console_store.load_latest(draft_id)
+        if state is None:
+            return {
+                "draft_id": draft_id,
+                "status": "idle",
+                "logs": [],
+                "results": [],
+            }
+        return state.model_dump(mode="json")
+
     @app.post("/api/drafts/{draft_id}/cover-upload")
     async def upload_cover(draft_id: str, payload: CoverUploadPayload):
         repository.load(draft_id)
@@ -179,3 +263,14 @@ def _default_publishers() -> dict[PlatformName, Publisher]:
         PlatformName.DOUYIN: DouyinPublisher(),
         PlatformName.WECHAT_CHANNELS: WechatChannelsPublisher(),
     }
+
+
+def _compute_run_status(results: list[RunConsolePlatformResult]) -> str:
+    statuses = [result.status for result in results]
+    if not statuses:
+        return "failed"
+    if all(status == "failed" for status in statuses):
+        return "failed"
+    if any(status == "failed" for status in statuses):
+        return "partial"
+    return "success"
