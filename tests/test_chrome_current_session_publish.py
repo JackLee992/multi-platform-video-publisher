@@ -91,3 +91,44 @@ def test_current_session_script_ensures_platform_tab_exists() -> None:
     assert "wait_for_platform_tab()" in content
     assert "ensure_platform_tab \"$platform_name\"" in content
     assert "wait_for_platform_tab \"$platform_name\"" in content
+    assert "wait_for_upload_input()" in content
+    assert "wait_for_fill_target()" in content
+
+
+def test_current_session_script_uses_inputevent_for_xiaohongshu_title_fill() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "new InputEvent('input'" in content
+    assert "new Event('blur'" in content
+
+
+def test_current_session_script_handles_douyin_resume_branch() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "handle_douyin_resume_prompt()" in content
+    assert "继续编辑" in content
+    assert "继续编辑？" in content
+    assert "handle_douyin_resume_prompt" in content
+
+
+def test_current_session_script_handles_wechat_dialogs_and_current_placeholder() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "handle_wechat_channels_dialogs()" in content
+    assert "将此次编辑保留?" in content
+    assert "概括视频主要内容，字数建议6-16个字符" in content

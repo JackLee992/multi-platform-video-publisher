@@ -88,6 +88,31 @@ if [[ -z "$DESCRIPTION" ]]; then
   DESCRIPTION="$TITLE"
 fi
 
+js_quote() {
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
+}
+
+JS_TITLE="$(js_quote "$TITLE")"
+JS_DESCRIPTION="$(js_quote "$DESCRIPTION")"
+
+escape_for_applescript() {
+  python3 -c 'import sys; print(sys.argv[1].replace("\\\\", "\\\\\\\\").replace("\"", "\\\\\""))' "$1"
+}
+
+AS_JS_TITLE="$(escape_for_applescript "$JS_TITLE")"
+AS_JS_DESCRIPTION="$(escape_for_applescript "$JS_DESCRIPTION")"
+
+js_single_quoted_literal() {
+  python3 -c "import sys; s=sys.argv[1]; print(\"'\" + s.replace('\\\\', '\\\\\\\\').replace(\"'\", \"\\\\'\").replace('\\n', '\\\\n') + \"'\")" "$1"
+}
+
+JS_TITLE_LITERAL="$(js_single_quoted_literal "$TITLE")"
+JS_DESCRIPTION_LITERAL="$(js_single_quoted_literal "$DESCRIPTION")"
+
+js_to_base64() {
+  python3 -c 'import base64, sys; print(base64.b64encode(sys.argv[1].encode("utf-8")).decode("ascii"))' "$1"
+}
+
 VIDEO_DIR="$(cd "$(dirname "$VIDEO_PATH")" && pwd)"
 VIDEO_FILE="$(basename "$VIDEO_PATH")"
 
@@ -202,6 +227,130 @@ APPLESCRIPT
   fi
 }
 
+wait_for_fill_target() {
+  local platform_name="$1"
+  local js_probe=""
+  local url_match=""
+
+  case "$platform_name" in
+    xiaohongshu)
+      url_match='tabUrl starts with "https://creator.xiaohongshu.com/publish/publish"'
+      js_probe="(() => !!Array.from(document.querySelectorAll('input')).find(el => (el.placeholder || '').includes('填写标题')))()"
+      ;;
+    douyin)
+      url_match='tabUrl starts with "https://creator.douyin.com/creator-micro/content/upload" or tabUrl starts with "https://creator.douyin.com/creator-micro/content/post/video"'
+      js_probe="(() => !!Array.from(document.querySelectorAll('input')).find(el => (el.placeholder || '').includes('填写作品标题')))()"
+      ;;
+    wechat_channels)
+      url_match='tabUrl starts with "https://channels.weixin.qq.com/platform/post/create"'
+      js_probe="(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; return !!Array.from(root.querySelectorAll('input')).find(el => { const placeholder = el.placeholder || ''; return placeholder.includes('6-16个字符') || placeholder.includes('概括视频主要内容') || placeholder.includes('概括视频主要内容，字数建议6-16个字符'); }); })()"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 60 times
+    repeat with w in windows
+      repeat with i from 1 to (count of tabs of w)
+        set t to tab i of w
+        set tabUrl to (URL of t as text)
+        if ${url_match} then
+          set readyState to execute t javascript "${js_probe}"
+          if readyState is "true" then return "ready"
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "timeout"
+APPLESCRIPT
+}
+
+wait_for_upload_input() {
+  local platform_name="$1"
+  local js_probe=""
+  local url_match=""
+
+  case "$platform_name" in
+    xiaohongshu)
+      url_match='tabUrl starts with "https://creator.xiaohongshu.com/publish/publish"'
+      js_probe="(() => !!document.querySelector('input[type=file]'))()"
+      ;;
+    douyin)
+      url_match='tabUrl starts with "https://creator.douyin.com/creator-micro/content/upload" or tabUrl starts with "https://creator.douyin.com/creator-micro/content/post/video"'
+      js_probe="(() => !!document.querySelector('input[type=file]'))()"
+      ;;
+    wechat_channels)
+      url_match='tabUrl starts with "https://channels.weixin.qq.com/platform/post/create"'
+      js_probe="(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; return !!root.querySelector('input[type=file]'); })()"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 30 times
+    repeat with w in windows
+      repeat with i from 1 to (count of tabs of w)
+        set t to tab i of w
+        set tabUrl to (URL of t as text)
+        if ${url_match} then
+          set readyState to execute t javascript "${js_probe}"
+          if readyState is "true" then return "ready"
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "timeout"
+APPLESCRIPT
+}
+
+handle_douyin_resume_prompt() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat with w in windows
+    repeat with t in tabs of w
+      set tabUrl to (URL of t as text)
+      if tabUrl starts with "https://creator.douyin.com/creator-micro/content/upload" or tabUrl starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+        set js to "(() => { const bodyText = (document.body && document.body.innerText) || ''; if (!bodyText.includes('你还有上次未发布的视频，是否继续编辑？')) return JSON.stringify({ok:true,action:'no_prompt'}); const abandon = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === '放弃'); if (!abandon) return JSON.stringify({ok:false,error:'missing abandon button'}); abandon.click(); return JSON.stringify({ok:true,action:'discard_previous_draft'}); })()"
+        return execute t javascript js
+      end if
+    end repeat
+  end repeat
+end tell
+return "{\"ok\":true,\"action\":\"not_found\"}"
+APPLESCRIPT
+}
+
+handle_wechat_channels_dialogs() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 5 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        set tabUrl to (URL of t as text)
+        if tabUrl starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; const bodyText = (root.innerText || document.body?.innerText || ''); const clickByText = (text) => { const target = Array.from(root.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (!target) return false; target.click(); return true; }; if (bodyText.includes('将此次编辑保留?')) { if (clickByText('不保存')) return JSON.stringify({ok:true,action:'discard_modal'}); } if (bodyText.includes('我知道了')) { if (clickByText('我知道了')) return JSON.stringify({ok:true,action:'acknowledged'}); } if (bodyText.includes('你还不能发表视频') || bodyText.includes('管理员本人验证')) { return JSON.stringify({ok:false,error:'wechat_channels_permission_blocked'}); } return JSON.stringify({ok:true,action:'clear'}); })()"
+          set resultJson to execute t javascript js
+          if resultJson is not "{\"ok\":true,\"action\":\"clear\"}" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "{\"ok\":true,\"action\":\"clear\"}"
+APPLESCRIPT
+}
+
 focus_platform_tab() {
   local platform_name="$1"
   local match_expr=""
@@ -249,15 +398,20 @@ APPLESCRIPT
 upload_xiaohongshu() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
-        set js to "window.__codexUploadResult='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexUploadResult = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexUploadResult = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
-        return execute t javascript js
-      end if
+  repeat 20 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+          set js to "window.__codexUploadResult='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexUploadResult = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexUploadResult = JSON.stringify({ok:false, error: String(error)}); } })(); document.querySelector('input[type=file]') ? 'scheduled' : 'retry'"
+          set uploadState to execute t javascript js
+          if uploadState is "scheduled" then return uploadState
+        end if
+      end repeat
     end repeat
+    delay 1
   end repeat
 end tell
+return "timeout"
 APPLESCRIPT
 }
 
@@ -283,15 +437,20 @@ APPLESCRIPT
 fill_xiaohongshu() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
-        set js to "(() => { const title = ${TITLE@Q}; const titleInput = Array.from(document.querySelectorAll('input')).find(el => (el.placeholder || '').includes('填写标题')); if (!titleInput) return JSON.stringify({ok:false,error:'missing title input'}); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(titleInput, title); titleInput.dispatchEvent(new Event('input', { bubbles: true })); titleInput.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ok:true, title:titleInput.value}); })()"
-        return execute t javascript js
-      end if
+  repeat 90 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+          set js to "(() => { const title = ${JS_TITLE_LITERAL}; const titleInput = Array.from(document.querySelectorAll('input')).find(el => (el.placeholder || '').includes('填写标题')); if (!titleInput) return JSON.stringify({ok:false,error:'missing title input'}); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(titleInput, title); titleInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: title })); titleInput.dispatchEvent(new Event('change', { bubbles: true })); titleInput.dispatchEvent(new Event('blur', { bubbles: true })); return JSON.stringify({ok:true, title:titleInput.value}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"ok\":true" then return resultJson
+        end if
+      end repeat
     end repeat
+    delay 1
   end repeat
 end tell
+return "{\"ok\":false,\"error\":\"missing title input\"}"
 APPLESCRIPT
 }
 
@@ -335,15 +494,20 @@ APPLESCRIPT
 upload_douyin() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
-        set js to "window.__codexDouyinUpload='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexDouyinUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexDouyinUpload = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
-        return execute t javascript js
-      end if
+  repeat 20 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+          set js to "window.__codexDouyinUpload='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexDouyinUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexDouyinUpload = JSON.stringify({ok:false, error: String(error)}); } })(); document.querySelector('input[type=file]') ? 'scheduled' : 'retry'"
+          set uploadState to execute t javascript js
+          if uploadState is "scheduled" then return uploadState
+        end if
+      end repeat
     end repeat
+    delay 1
   end repeat
 end tell
+return "timeout"
 APPLESCRIPT
 }
 
@@ -369,15 +533,20 @@ APPLESCRIPT
 fill_douyin() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
-        set js to "(() => { const title = ${TITLE@Q}; const desc = ${DESCRIPTION@Q}; const titleInput = Array.from(document.querySelectorAll('input')).find(el => (el.placeholder || '').includes('填写作品标题')); if (!titleInput) return JSON.stringify({ok:false,error:'missing title input'}); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(titleInput, title); titleInput.dispatchEvent(new Event('input', { bubbles: true })); titleInput.dispatchEvent(new Event('change', { bubbles: true })); const editor = document.querySelector('[contenteditable=true]'); if (editor) { editor.focus(); editor.innerHTML = ''; editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null })); editor.textContent = desc; editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: desc })); editor.dispatchEvent(new Event('change', { bubbles: true })); } return JSON.stringify({ok:true, title:titleInput.value, editorText: editor ? editor.innerText : null}); })()"
-        return execute t javascript js
-      end if
+  repeat 90 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+          set js to "(() => { const title = ${JS_TITLE_LITERAL}; const desc = ${JS_DESCRIPTION_LITERAL}; const titleInput = Array.from(document.querySelectorAll('input')).find(el => (el.placeholder || '').includes('填写作品标题')); if (!titleInput) return JSON.stringify({ok:false,error:'missing title input'}); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(titleInput, title); titleInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: title })); titleInput.dispatchEvent(new Event('change', { bubbles: true })); titleInput.dispatchEvent(new Event('blur', { bubbles: true })); const editor = document.querySelector('[contenteditable=true]'); if (editor) { editor.focus(); editor.innerHTML = ''; editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null })); editor.textContent = desc; editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: desc })); editor.dispatchEvent(new Event('change', { bubbles: true })); editor.dispatchEvent(new Event('blur', { bubbles: true })); } return JSON.stringify({ok:true, title:titleInput.value, editorText: editor ? editor.innerText : null}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"ok\":true" then return resultJson
+        end if
+      end repeat
     end repeat
+    delay 1
   end repeat
 end tell
+return "{\"ok\":false,\"error\":\"missing title input\"}"
 APPLESCRIPT
 }
 
@@ -418,15 +587,20 @@ APPLESCRIPT
 upload_wechat_channels() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
-        set js to "window.__codexWxUpload='starting'; (async () => { try { const host = document.querySelector('wujie-app'); const shadow = host && host.shadowRoot; const input = shadow && shadow.querySelector('input[type=file]'); if (!input) throw new Error('missing shadow input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexWxUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexWxUpload = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
-        return execute t javascript js
-      end if
+  repeat 20 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "window.__codexWxUpload='starting'; (async () => { try { const root = document.querySelector('wujie-app')?.shadowRoot || document; const input = root.querySelector('input[type=file]'); if (!input) throw new Error('missing shadow input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexWxUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexWxUpload = JSON.stringify({ok:false, error: String(error)}); } })(); (document.querySelector('wujie-app')?.shadowRoot || document).querySelector('input[type=file]') ? 'scheduled' : 'retry'"
+          set uploadState to execute t javascript js
+          if uploadState is "scheduled" then return uploadState
+        end if
+      end repeat
     end repeat
+    delay 1
   end repeat
 end tell
+return "timeout"
 APPLESCRIPT
 }
 
@@ -452,15 +626,20 @@ APPLESCRIPT
 fill_wechat_channels() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
-        set js to "(() => { const shadow = document.querySelector('wujie-app')?.shadowRoot; if (!shadow) return JSON.stringify({ok:false,error:'missing shadow root'}); const title = ${TITLE@Q}; const titleInput = Array.from(shadow.querySelectorAll('input')).find(el => (el.placeholder || '').includes('6-16个字符')); if (!titleInput) return JSON.stringify({ok:false,error:'missing short title input'}); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(titleInput, title); titleInput.dispatchEvent(new Event('input', { bubbles: true })); titleInput.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ok:true, title:titleInput.value}); })()"
-        return execute t javascript js
-      end if
+  repeat 90 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; const title = ${JS_TITLE_LITERAL}; const titleInput = Array.from(root.querySelectorAll('input')).find(el => { const placeholder = el.placeholder || ''; return placeholder.includes('6-16个字符') || placeholder.includes('概括视频主要内容') || placeholder.includes('概括视频主要内容，字数建议6-16个字符'); }); if (!titleInput) return JSON.stringify({ok:false,error:'missing short title input'}); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(titleInput, title); titleInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: title })); titleInput.dispatchEvent(new Event('change', { bubbles: true })); titleInput.dispatchEvent(new Event('blur', { bubbles: true })); return JSON.stringify({ok:true, title:titleInput.value, placeholder:titleInput.placeholder}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"ok\":true" then return resultJson
+        end if
+        end repeat
     end repeat
+    delay 1
   end repeat
 end tell
+return "{\"ok\":false,\"error\":\"missing short title input\"}"
 APPLESCRIPT
 }
 
@@ -503,28 +682,45 @@ run_platform() {
 
   case "$platform_name" in
     xiaohongshu)
+      echo "[${platform_name}] upload_start"
       upload_xiaohongshu
       poll_xiaohongshu_upload
+      echo "[${platform_name}] fill_start"
       fill_xiaohongshu
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
+        echo "[${platform_name}] publish_start"
         publish_xiaohongshu
         check_xiaohongshu_result
       fi
       ;;
     douyin)
+      echo "[${platform_name}] discard_old_draft_check"
+      handle_douyin_resume_prompt
+      echo "[${platform_name}] upload_start"
       upload_douyin
       poll_douyin_upload
+      echo "[${platform_name}] discard_old_draft_check"
+      handle_douyin_resume_prompt
+      echo "[${platform_name}] fill_start"
       fill_douyin
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
+        echo "[${platform_name}] publish_start"
         publish_douyin
         check_douyin_result
       fi
       ;;
     wechat_channels)
+      echo "[${platform_name}] dialog_check"
+      handle_wechat_channels_dialogs
+      echo "[${platform_name}] upload_start"
       upload_wechat_channels
       poll_wechat_channels_upload
+      echo "[${platform_name}] dialog_check"
+      handle_wechat_channels_dialogs
+      echo "[${platform_name}] fill_start"
       fill_wechat_channels
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
+        echo "[${platform_name}] publish_start"
         publish_wechat_channels
         check_wechat_channels_result
       fi
