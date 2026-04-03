@@ -258,6 +258,52 @@ python -m playwright install chromium
 
 ## 真实发布时的注意事项
 
+### Chrome 当前会话注入脚本
+
+如果你已经在当前 Chrome 里登录了三个平台，而且希望尽量复用“当前标签页 + JS 注入”的方式，可以直接使用仓库里的脚本：
+
+```bash
+./scripts/chrome_current_session_publish.sh \
+  --video /absolute/path/to/video.mov \
+  --title "第二次三端测试"
+```
+
+这个脚本会：
+
+- 复用当前 Chrome 已打开的平台发布页
+- 在本地启动或复用一个文件服务
+- 通过 AppleScript 向当前页面注入 JS
+- 把本地视频包装成 `File` 并塞进页面的 `input[type=file]`
+- 自动填写最小标题字段
+- 默认继续点击最终发布
+
+如果你只想走到“已上传并已填字段”，不立即提交，可以加：
+
+```bash
+./scripts/chrome_current_session_publish.sh \
+  --video /absolute/path/to/video.mov \
+  --title "第二次三端测试" \
+  --skip-publish
+```
+
+如果只想测试单个平台：
+
+```bash
+./scripts/chrome_current_session_publish.sh \
+  --video /absolute/path/to/video.mov \
+  --title "第二次三端测试" \
+  --platform xiaohongshu
+```
+
+当前脚本已经验证过这三条路径：
+
+- 小红书：主 DOM 中的上传 input
+- 抖音：主 DOM 中的上传 input
+- 视频号：`wujie-app.shadowRoot` 中的上传 input
+
+补充说明见：
+[chrome-current-session-injection.md](/Users/elainelee999/Documents/Playground/.worktrees/codex-multi-platform-publisher/multi-platform-video-publisher/docs/chrome-current-session-injection.md)
+
 ### Chrome 登录态
 
 如果你希望流程尽量顺畅：
