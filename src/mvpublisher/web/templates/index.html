@@ -14,6 +14,13 @@
         <span>{{ draft.summary or "" }}</span>
         <span>审批：{{ draft.approval_status.value }}</span>
         <span>执行模式：{{ draft.execution_mode.value }}</span>
+        <span>校验：{{ draft.validation_status.value }}</span>
+        {% if draft.publish_history %}
+        {% set latest = draft.publish_history[-1] %}
+        <span>最近结果：{{ latest.results | length }} 个平台 / {{ latest.execution_mode.value }}</span>
+        {% else %}
+        <span>最近结果：暂无</span>
+        {% endif %}
       </li>
       {% else %}
       <li>暂无草稿</li>

@@ -28,9 +28,33 @@ class PublishResult:
 
     def write(self, artifact_root: Path) -> None:
         artifact_root.mkdir(parents=True, exist_ok=True)
+        summary_path = artifact_root / "result_summary.txt"
+        summary_path.write_text(
+            "\n".join(
+                [
+                    f"platform={self.platform_name}",
+                    f"status={self.status}",
+                    f"execution_mode={self.execution_mode.value}",
+                    f"submitted={self.submitted}",
+                    f"success_signal={self.success_signal or ''}",
+                    f"result_url={self.result_url or ''}",
+                    f"error_type={self.error_type or ''}",
+                    f"error_message={self.error_message or ''}",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        screenshot_path_value = self.screenshot_path
+        if screenshot_path_value is None:
+            screenshot_path = artifact_root / "page_state.txt"
+            screenshot_path.write_text(
+                f"status={self.status}\nsuccess_signal={self.success_signal or ''}\nresult_url={self.result_url or ''}\n",
+                encoding="utf-8",
+            )
+            screenshot_path_value = str(screenshot_path)
         (artifact_root / "publish_result.json").write_text(
             json.dumps(
-                asdict(self),
+                {**asdict(self), "screenshot_path": screenshot_path_value},
                 ensure_ascii=False,
                 indent=2,
                 default=_json_default,

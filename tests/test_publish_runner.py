@@ -53,6 +53,9 @@ def test_minimal_publishers_return_paused_manual_completion_result_and_create_ar
         assert result.awaiting_manual_publish is True
         assert result.execution_mode is ExecutionMode.AUTOFILL_ONLY
         assert artifact_root.exists()
+        assert (artifact_root / "publish_result.json").exists()
+        assert (artifact_root / "result_summary.txt").exists()
+        assert (artifact_root / "page_state.txt").exists()
 
 
 def test_xiaohongshu_publisher_writes_artifact_on_pause(tmp_path):
@@ -75,6 +78,7 @@ def test_xiaohongshu_publisher_writes_artifact_on_pause(tmp_path):
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["platform_name"] == PlatformName.XIAOHONGSHU.value
     assert payload["status"] == result.status
+    assert payload["screenshot_path"]
 
 
 def test_run_publishers_iterates_selected_platforms_and_calls_session_factory(tmp_path):

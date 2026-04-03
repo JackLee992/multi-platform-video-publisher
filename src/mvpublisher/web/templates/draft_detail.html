@@ -288,6 +288,9 @@
               <div>执行模式：{{ history.execution_mode.value }}</div>
               {% for result in history.results %}
               <div>{{ result.platform_name.value }} / {{ result.status }}</div>
+              <div>信号：{{ result.success_signal or "none" }}</div>
+              <div>结果地址：{{ result.result_url or "none" }}</div>
+              <div>错误：{{ result.error_message or "none" }}</div>
               {% endfor %}
             </div>
             {% else %}
