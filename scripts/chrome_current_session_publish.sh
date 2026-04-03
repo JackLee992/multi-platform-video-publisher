@@ -127,6 +127,7 @@ js_to_base64() {
 VIDEO_DIR="$(cd "$(dirname "$VIDEO_PATH")" && pwd)"
 VIDEO_FILE="$(basename "$VIDEO_PATH")"
 COVER_FILE=""
+COVER_BASE64=""
 ASSET_DIR=""
 
 ensure_server() {
@@ -134,6 +135,7 @@ ensure_server() {
   ln -sf "$VIDEO_PATH" "$ASSET_DIR/$VIDEO_FILE"
   if [[ -n "$COVER_PATH" ]]; then
     COVER_FILE="$(basename "$COVER_PATH")"
+    COVER_BASE64="$(python3 -c "import base64, pathlib, sys; print(base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode('ascii'))" "$COVER_PATH")"
     ln -sf "$COVER_PATH" "$ASSET_DIR/$COVER_FILE"
   fi
   if ! lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -497,6 +499,42 @@ APPLESCRIPT
 }
 
 apply_xiaohongshu_cover() {
+  if [[ -n "$COVER_FILE" ]]; then
+    run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 45 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+          set js to "window.__codexXhsCover='starting'; (async () => { try { const clickByText = (texts) => { for (const text of texts) { const target = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (target) { target.click(); return text; } } return null; }; const bytesFromBase64 = (value) => Uint8Array.from(atob(value), c => c.charCodeAt(0)); clickByText(['设置封面', '修改封面']); await new Promise(resolve => setTimeout(resolve, 800)); const input = Array.from(document.querySelectorAll('input[type=file]')).find(el => ((el.accept || '').includes('image/png, image/jpeg, image/*') || (el.accept || '').includes('image/'))); if (!input) throw new Error('missing xiaohongshu cover input'); const bytes = bytesFromBase64('${COVER_BASE64}'); const file = new File([bytes], '${COVER_FILE}', {type: 'image/jpeg'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 1200)); const confirm = Array.from(document.querySelectorAll('button,div,span')).find(el => ['确定', '完成', '确认'].includes((el.innerText || '').trim())); if (confirm) confirm.click(); await new Promise(resolve => setTimeout(resolve, 1200)); const preview = Array.from(document.querySelectorAll('[style*=\"background-image\"], img')).find(el => { const style = el.getAttribute && el.getAttribute('style'); const src = el.getAttribute && el.getAttribute('src'); return (style && style.includes('blob:')) || (src && src.startsWith('blob:')); }); window.__codexXhsCover = JSON.stringify({ok:true, action:'custom_cover_uploaded', files: input.files.length, preview: !!preview}); } catch (error) { window.__codexXhsCover = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
+          return execute t javascript js
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "timeout"
+APPLESCRIPT
+    run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 25 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+          set resultJson to execute t javascript "window.__codexXhsCover || ''"
+          if resultJson is not "" and resultJson is not "starting" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "timeout"
+end tell
+APPLESCRIPT
+    return 0
+  fi
+
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
   repeat with w in windows
@@ -733,7 +771,7 @@ tell application "Google Chrome"
     repeat with w in windows
       repeat with t in tabs of w
         if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
-          set js to "window.__codexWxCover='starting'; (async () => { try { const root = document.querySelector('wujie-app')?.shadowRoot || document; const clickByText = (text) => { const target = Array.from(root.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (!target) return false; target.click(); return true; }; clickByText('编辑'); clickByText('上传封面'); const inputs = Array.from(root.querySelectorAll('input[type=file]')); const input = inputs[inputs.length - 1]; if (!input) throw new Error('missing cover input'); const res = await fetch('http://${HOST}:${PORT}/${COVER_FILE}'); const blob = await res.blob(); const file = new File([blob], '${COVER_FILE}', {type: blob.type || 'image/jpeg'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); setTimeout(() => { clickByText('确定'); clickByText('确认'); }, 1200); window.__codexWxCover = JSON.stringify({ok:true, action:'cover_uploaded', files: input.files.length}); } catch (error) { window.__codexWxCover = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
+          set js to "window.__codexWxCover='starting'; (async () => { try { const root = document.querySelector('wujie-app')?.shadowRoot || document; const clickByText = (text) => { const target = Array.from(root.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (!target) return false; target.click(); return true; }; const bytesFromBase64 = (value) => Uint8Array.from(atob(value), c => c.charCodeAt(0)); clickByText('编辑'); clickByText('上传封面'); const inputs = Array.from(root.querySelectorAll('input[type=file]')); const input = inputs[inputs.length - 1]; if (!input) throw new Error('missing cover input'); const bytes = bytesFromBase64('${COVER_BASE64}'); const file = new File([bytes], '${COVER_FILE}', {type: 'image/jpeg'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); setTimeout(() => { clickByText('确定'); clickByText('确认'); }, 1200); window.__codexWxCover = JSON.stringify({ok:true, action:'cover_uploaded', files: input.files.length}); } catch (error) { window.__codexWxCover = JSON.stringify({ok:false, error: String(error)}); } })(); 'scheduled'"
           return execute t javascript js
         end if
       end repeat
@@ -759,6 +797,26 @@ tell application "Google Chrome"
     delay 1
   end repeat
   return "timeout"
+end tell
+APPLESCRIPT
+}
+
+verify_wechat_channels_cover() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 25 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; const preview = root.querySelector('.cover-preview-wrap .vertical-img-size.cover-img-vertical'); const src = preview ? (preview.getAttribute('src') || preview.src || '') : ''; const dialog = root.querySelector('.cover-preview-wrap .weui-desktop-dialog__wrp'); const dialogHidden = !dialog || getComputedStyle(dialog).display === 'none'; if (src && dialogHidden) return JSON.stringify({ok:true, action:'cover_verified', src}); return JSON.stringify({ok:false, error:'cover_not_verified', src, dialogHidden}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"action\":\"cover_verified\"" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "{\"ok\":false,\"error\":\"cover_not_verified\"}"
 end tell
 APPLESCRIPT
 }
@@ -854,6 +912,7 @@ run_platform() {
       echo "[${platform_name}] cover_start"
       apply_wechat_channels_cover
       poll_wechat_channels_cover
+      verify_wechat_channels_cover
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
         echo "[${platform_name}] publish_start"
         publish_wechat_channels

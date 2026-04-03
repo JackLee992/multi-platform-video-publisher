@@ -161,3 +161,29 @@ def test_current_session_script_supports_cover_and_description_fill_paths() -> N
     assert "apply_xiaohongshu_cover" in content
     assert "fill_wechat_channels_description" in content
     assert "apply_wechat_channels_cover" in content
+
+
+def test_current_session_script_uses_custom_cover_upload_for_xiaohongshu() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "image/png, image/jpeg, image/*" in content
+    assert "missing xiaohongshu cover input" in content
+    assert "custom_cover_uploaded" in content
+
+
+def test_current_session_script_verifies_wechat_cover_after_upload() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "verify_wechat_channels_cover" in content
+    assert ".cover-preview-wrap .vertical-img-size.cover-img-vertical" in content
+    assert "cover_verified" in content
