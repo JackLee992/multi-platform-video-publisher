@@ -397,26 +397,84 @@ focus_platform_tab() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
   activate
-  set matchedWindowIndex to 0
+  set matchedWindow to missing value
   set matchedTabIndex to 0
   repeat with w in windows
     repeat with i from 1 to (count of tabs of w)
       set t to tab i of w
       set tabUrl to (URL of t as text)
       if ${match_expr//url/tabUrl} then
-        set matchedWindowIndex to index of w
+        set matchedWindow to w
         set matchedTabIndex to i
       end if
     end repeat
   end repeat
-  if matchedWindowIndex is not 0 then
-    set index of window matchedWindowIndex to 1
-    set active tab index of window 1 to matchedTabIndex
+  if matchedWindow is not missing value then
+    set active tab index of matchedWindow to matchedTabIndex
+    set index of matchedWindow to 1
     return "focused"
   end if
 end tell
 return "not_found"
 APPLESCRIPT
+}
+
+upload_via_native_file_picker() {
+  local platform_name="$1"
+  local opener_js=""
+  local url_match=""
+
+  case "$platform_name" in
+    xiaohongshu)
+      url_match='tabUrl starts with "https://creator.xiaohongshu.com/publish/publish"'
+      opener_js="(() => { const input = document.querySelector('input[type=file]'); if (!input) return 'missing_input'; if (input.showPicker) { input.showPicker(); return 'picker_opened'; } input.click(); return 'clicked'; })()"
+      ;;
+    douyin)
+      url_match='tabUrl starts with "https://creator.douyin.com/creator-micro/content/upload" or tabUrl starts with "https://creator.douyin.com/creator-micro/content/post/video"'
+      opener_js="(() => { const input = Array.from(document.querySelectorAll('input[type=file]')).find(el => (el.accept || '').includes('video/')); if (!input) return 'missing_input'; if (input.showPicker) { input.showPicker(); return 'picker_opened'; } input.click(); return 'clicked'; })()"
+      ;;
+    wechat_channels)
+      url_match='tabUrl starts with "https://channels.weixin.qq.com/platform/post/create"'
+      opener_js="(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; const input = root.querySelector('input[type=file]'); if (!input) return 'missing_input'; if (input.showPicker) { input.showPicker(); return 'picker_opened'; } input.click(); return 'clicked'; })()"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  focus_platform_tab "$platform_name" >/dev/null
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  activate
+  repeat with w in windows
+    repeat with t in tabs of w
+      set tabUrl to (URL of t as text)
+      if ${url_match} then
+        execute t javascript "${opener_js}"
+        exit repeat
+      end if
+    end repeat
+  end repeat
+end tell
+
+delay 0.6
+tell application "System Events"
+  keystroke "g" using {command down, shift down}
+  delay 0.3
+  keystroke "${VIDEO_PATH}"
+  delay 0.3
+  key code 36
+  delay 0.5
+  key code 36
+end tell
+APPLESCRIPT
+
+  echo "{\"ok\":true,\"action\":\"native_picker_submitted\",\"platform\":\"${platform_name}\"}"
+}
+
+json_failed() {
+  local result_json="$1"
+  [[ "$result_json" == *"\"ok\":false"* ]] || [[ "$result_json" == "timeout" ]]
 }
 
 upload_xiaohongshu() {
@@ -426,7 +484,7 @@ tell application "Google Chrome"
     repeat with w in windows
       repeat with t in tabs of w
         if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
-          set js to "window.__codexUploadResult='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexUploadResult = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexUploadResult = JSON.stringify({ok:false, error: String(error)}); } })(); document.querySelector('input[type=file]') ? 'scheduled' : 'retry'"
+          set js to "window.__codexUploadResult='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const fetchAssetBlob = async (name) => { const urls = ['http://${HOST}:${PORT}/' + name, 'http://localhost:${PORT}/' + name]; let lastError = null; for (const url of urls) { for (let attempt = 1; attempt <= 3; attempt += 1) { try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error('bad status ' + res.status + ' for ' + url); return await res.blob(); } catch (error) { lastError = error; await new Promise(resolve => setTimeout(resolve, attempt * 400)); } } } throw lastError || new Error('failed to fetch asset'); }; const blob = await fetchAssetBlob('${VIDEO_FILE}'); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexUploadResult = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexUploadResult = JSON.stringify({ok:false, error: String(error)}); } })(); document.querySelector('input[type=file]') ? 'scheduled' : 'retry'"
           set uploadState to execute t javascript js
           if uploadState is "scheduled" then return uploadState
         end if
@@ -594,7 +652,7 @@ tell application "Google Chrome"
     repeat with w in windows
       repeat with t in tabs of w
         if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
-          set js to "window.__codexDouyinUpload='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexDouyinUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexDouyinUpload = JSON.stringify({ok:false, error: String(error)}); } })(); document.querySelector('input[type=file]') ? 'scheduled' : 'retry'"
+          set js to "window.__codexDouyinUpload='starting'; (async () => { try { const input = document.querySelector('input[type=file]'); if (!input) throw new Error('missing input'); const fetchAssetBlob = async (name) => { const urls = ['http://${HOST}:${PORT}/' + name, 'http://localhost:${PORT}/' + name]; let lastError = null; for (const url of urls) { for (let attempt = 1; attempt <= 3; attempt += 1) { try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error('bad status ' + res.status + ' for ' + url); return await res.blob(); } catch (error) { lastError = error; await new Promise(resolve => setTimeout(resolve, attempt * 400)); } } } throw lastError || new Error('failed to fetch asset'); }; const blob = await fetchAssetBlob('${VIDEO_FILE}'); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexDouyinUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexDouyinUpload = JSON.stringify({ok:false, error: String(error)}); } })(); document.querySelector('input[type=file]') ? 'scheduled' : 'retry'"
           set uploadState to execute t javascript js
           if uploadState is "scheduled" then return uploadState
         end if
@@ -750,7 +808,7 @@ tell application "Google Chrome"
     repeat with w in windows
       repeat with t in tabs of w
         if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
-          set js to "window.__codexWxUpload='starting'; (async () => { try { const root = document.querySelector('wujie-app')?.shadowRoot || document; const input = root.querySelector('input[type=file]'); if (!input) throw new Error('missing shadow input'); const res = await fetch('http://${HOST}:${PORT}/${VIDEO_FILE}'); const blob = await res.blob(); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexWxUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexWxUpload = JSON.stringify({ok:false, error: String(error)}); } })(); (document.querySelector('wujie-app')?.shadowRoot || document).querySelector('input[type=file]') ? 'scheduled' : 'retry'"
+          set js to "window.__codexWxUpload='starting'; (async () => { try { const root = document.querySelector('wujie-app')?.shadowRoot || document; const input = root.querySelector('input[type=file]'); if (!input) throw new Error('missing shadow input'); const fetchAssetBlob = async (name) => { const urls = ['http://${HOST}:${PORT}/' + name, 'http://localhost:${PORT}/' + name]; let lastError = null; for (const url of urls) { for (let attempt = 1; attempt <= 3; attempt += 1) { try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error('bad status ' + res.status + ' for ' + url); return await res.blob(); } catch (error) { lastError = error; await new Promise(resolve => setTimeout(resolve, attempt * 400)); } } } throw lastError || new Error('failed to fetch asset'); }; const blob = await fetchAssetBlob('${VIDEO_FILE}'); const file = new File([blob], '${VIDEO_FILE}', {type: blob.type || 'video/quicktime'}); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); window.__codexWxUpload = JSON.stringify({ok:true, files: input.files.length, name: input.files[0] && input.files[0].name, size: input.files[0] && input.files[0].size}); } catch (error) { window.__codexWxUpload = JSON.stringify({ok:false, error: String(error)}); } })(); (document.querySelector('wujie-app')?.shadowRoot || document).querySelector('input[type=file]') ? 'scheduled' : 'retry'"
           set uploadState to execute t javascript js
           if uploadState is "scheduled" then return uploadState
         end if
@@ -926,7 +984,12 @@ run_platform() {
     xiaohongshu)
       echo "[${platform_name}] upload_start"
       upload_xiaohongshu
-      poll_xiaohongshu_upload
+      xiaohongshu_upload_result="$(poll_xiaohongshu_upload)"
+      echo "$xiaohongshu_upload_result"
+      if json_failed "$xiaohongshu_upload_result"; then
+        echo "[${platform_name}] upload_fallback_native_picker"
+        upload_via_native_file_picker "$platform_name"
+      fi
       focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_xiaohongshu
@@ -946,7 +1009,12 @@ run_platform() {
       focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] upload_start"
       upload_douyin
-      poll_douyin_upload
+      douyin_upload_result="$(poll_douyin_upload)"
+      echo "$douyin_upload_result"
+      if json_failed "$douyin_upload_result"; then
+        echo "[${platform_name}] upload_fallback_native_picker"
+        upload_via_native_file_picker "$platform_name"
+      fi
       echo "[${platform_name}] discard_old_draft_check"
       handle_douyin_resume_prompt
       focus_platform_tab "$platform_name" >/dev/null
@@ -968,7 +1036,12 @@ run_platform() {
       focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] upload_start"
       upload_wechat_channels
-      poll_wechat_channels_upload
+      wechat_upload_result="$(poll_wechat_channels_upload)"
+      echo "$wechat_upload_result"
+      if json_failed "$wechat_upload_result"; then
+        echo "[${platform_name}] upload_fallback_native_picker"
+        upload_via_native_file_picker "$platform_name"
+      fi
       echo "[${platform_name}] dialog_check"
       handle_wechat_channels_dialogs
       focus_platform_tab "$platform_name" >/dev/null

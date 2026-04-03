@@ -214,3 +214,41 @@ def test_current_session_script_verifies_douyin_cover_after_upload() -> None:
     assert "verify_douyin_cover" in content
     assert "横/竖双封面缺失" in content
     assert "douyin_cover_verified" in content
+
+
+def test_current_session_script_retries_video_fetch_with_localhost_fallback() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "fetchAssetBlob" in content
+    assert "http://localhost:${PORT}/' + name" in content
+    assert "attempt <= 3" in content
+
+
+def test_current_session_script_has_native_file_picker_fallback_for_video_upload() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "upload_via_native_file_picker" in content
+    assert "tell application \"System Events\"" in content
+    assert "keystroke \"g\" using {command down, shift down}" in content
+
+
+def test_current_session_script_focuses_tabs_by_window_reference() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "set matchedWindow to missing value" in content
+    assert "set active tab index of matchedWindow" in content
