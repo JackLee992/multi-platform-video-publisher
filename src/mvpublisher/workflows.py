@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Protocol
 
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.media.cover_frames import extract_cover_frames
 from mvpublisher.models.draft import PlatformDraft, PlatformName, PublishDraft
 from mvpublisher.publishers.base import PublishResult, Publisher
@@ -65,31 +66,47 @@ def publish_draft_from_repository(
     repository: DraftRepository,
     publishers: Mapping[PlatformName, Publisher],
     session_factory: SessionFactory,
+    selected_platforms: Optional[list[PlatformName]] = None,
+    execution_mode: Optional[ExecutionMode] = None,
 ) -> tuple[PublishDraft, list[PublishResult]]:
     draft = repository.load(draft_id)
+    if execution_mode is not None:
+        draft = draft.model_copy(update={"execution_mode": execution_mode})
+    target_platforms = selected_platforms or draft.selected_platforms
+    draft_for_publish = draft.model_copy(update={"selected_platforms": target_platforms})
+    attempt_number = len(draft.publish_history) + 1
+    publish_root = repository.artifact_dir(draft_id) / "publish" / f"attempt-{attempt_number:03d}"
+    repository.write_snapshot(draft_for_publish, publish_root / "draft_snapshot.json")
     results = run_publishers(
-        draft=draft,
+        draft=draft_for_publish,
         publishers=publishers,
         session_factory=session_factory,
-        artifact_root=repository.artifact_dir(draft_id) / "publish",
+        artifact_root=publish_root,
     )
     result_map = {PlatformName(result.platform_name): result for result in results}
-    updated_platform_drafts = [
-        PlatformDraft(
+    existing_platform_drafts = {
+        platform_draft.platform_name: platform_draft
+        for platform_draft in draft.platform_drafts
+    }
+    for platform_name in target_platforms:
+        existing_platform_drafts[platform_name] = PlatformDraft(
             platform_name=platform_name,
             execution_status=result_map[platform_name].status,
             last_error=result_map[platform_name].error_message,
             result_url=result_map[platform_name].result_url,
             artifacts=[
                 str(
-                    repository.artifact_dir(draft_id)
-                    / "publish"
+                    publish_root
                     / platform_name.value
                     / "publish_result.json"
-                )
+                ),
+                str(publish_root / "draft_snapshot.json"),
             ],
         )
+    updated_platform_drafts = [
+        existing_platform_drafts[platform_name]
         for platform_name in draft.selected_platforms
+        if platform_name in existing_platform_drafts
     ]
     updated_draft = apply_publish_results(
         draft.model_copy(update={"platform_drafts": updated_platform_drafts}),

@@ -4,7 +4,8 @@ import base64
 from fastapi.testclient import TestClient
 
 from mvpublisher.execution_modes import ExecutionMode
-from mvpublisher.models.draft import PlatformName, PublishDraft
+from mvpublisher.models.draft import DraftApprovalStatus, PlatformName, PublishDraft
+from mvpublisher.publishers.base import PublishResult
 from mvpublisher.storage.drafts import DraftRepository
 from mvpublisher.web.app import create_app
 
@@ -116,8 +117,44 @@ def test_approval_api_can_store_autofill_only_mode(tmp_path, monkeypatch) -> Non
 def test_retry_api_appends_retry_request_to_history(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MVPUBLISHER_HOME", str(tmp_path / "runtime"))
     repository = DraftRepository((tmp_path / "runtime") / "drafts")
-    draft = repository.save(_build_draft(tmp_path))
-    client = TestClient(create_app())
+    cover = tmp_path / "selected-cover.jpg"
+    cover.write_text("cover", encoding="utf-8")
+    draft = repository.save(
+        _build_draft(tmp_path).model_copy(
+            update={
+                "selected_title": "最终标题",
+                "selected_cover_path": cover,
+                "selected_platforms": [PlatformName.DOUYIN],
+                "approval_status": DraftApprovalStatus.APPROVED,
+            }
+        )
+    )
+
+    class FakePublisher:
+        platform_name = PlatformName.DOUYIN.value
+
+        def publish(self, draft, session_resolution, artifact_root):
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            result = PublishResult(
+                platform_name=self.platform_name,
+                status="awaiting_manual_publish",
+                submitted=False,
+                result_url="https://creator.douyin.com/creator-micro/content/post/video",
+                error_message=None,
+                execution_mode=draft.execution_mode,
+                awaiting_manual_publish=True,
+                success_signal="editor_ready",
+            )
+            result.write(artifact_root)
+            return result
+
+    client = TestClient(
+        create_app(
+            repository=repository,
+            publishers={PlatformName.DOUYIN: FakePublisher()},
+            session_factory=lambda platform_name: {"platform": platform_name.value},
+        )
+    )
 
     response = client.post(
         f"/api/drafts/{draft.draft_id}/retry",
@@ -131,6 +168,10 @@ def test_retry_api_appends_retry_request_to_history(tmp_path, monkeypatch) -> No
     payload = response.json()
     assert payload["platform_name"] == "douyin"
     assert payload["execution_mode"] == "autofill_only"
+    assert payload["status"] == "awaiting_manual_publish"
+    reloaded = repository.load(draft.draft_id)
+    assert len(reloaded.publish_history) == 1
+    assert reloaded.publish_history[0].results[0].platform_name is PlatformName.DOUYIN
 
 
 def test_cover_upload_api_writes_uploaded_cover(tmp_path, monkeypatch) -> None:

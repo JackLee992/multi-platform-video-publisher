@@ -1,5 +1,6 @@
 import base64
 from pathlib import Path
+from typing import Callable, Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -10,7 +11,15 @@ from mvpublisher.approval.service import ApprovalService
 from mvpublisher.config import AppConfig
 from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import PlatformName
+from mvpublisher.publishers import (
+    DouyinPublisher,
+    Publisher,
+    WechatChannelsPublisher,
+    XiaohongshuPublisher,
+)
+from mvpublisher.sessions import PlatformSessionRequest, resolve_session
 from mvpublisher.storage.drafts import DraftRepository
+from mvpublisher.workflows import publish_draft_from_repository
 
 
 class ApprovalPayload(BaseModel):
@@ -31,14 +40,29 @@ class RetryPayload(BaseModel):
     execution_mode: str = ExecutionMode.AUTOFILL_ONLY.value
 
 
-def create_app() -> FastAPI:
+SessionFactory = Callable[[PlatformName], object]
+
+
+def create_app(
+    repository: Optional[DraftRepository] = None,
+    publishers: Optional[Mapping[PlatformName, Publisher]] = None,
+    session_factory: Optional[SessionFactory] = None,
+) -> FastAPI:
     templates = Jinja2Templates(
         directory=str(Path(__file__).resolve().parent / "templates")
     )
     app = FastAPI()
     config = AppConfig.from_env()
-    repository = DraftRepository(config.home_dir / "drafts")
+    repository = repository or DraftRepository(config.home_dir / "drafts")
     approval_service = ApprovalService()
+    publishers = publishers or _default_publishers()
+    session_factory = session_factory or (
+        lambda platform_name: resolve_session(
+            request=PlatformSessionRequest(platform_name=platform_name.value),
+            state_root=config.home_dir / "sessions",
+            live_browser_available=True,
+        )
+    )
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -95,14 +119,21 @@ def create_app() -> FastAPI:
 
     @app.post("/api/drafts/{draft_id}/retry")
     async def retry_platform(draft_id: str, payload: RetryPayload):
-        draft = repository.load(draft_id)
-        updated = repository.save(
-            draft.model_copy(update={"execution_mode": ExecutionMode(payload.execution_mode)})
+        platform_name = PlatformName(payload.platform_name)
+        saved_draft, results = publish_draft_from_repository(
+            draft_id=draft_id,
+            repository=repository,
+            publishers=publishers,
+            session_factory=session_factory,
+            selected_platforms=[platform_name],
+            execution_mode=ExecutionMode(payload.execution_mode),
         )
+        result = results[0]
         return {
-            "draft_id": updated.draft_id,
-            "platform_name": payload.platform_name,
-            "execution_mode": updated.execution_mode.value,
+            "draft_id": saved_draft.draft_id,
+            "platform_name": result.platform_name,
+            "execution_mode": result.execution_mode.value,
+            "status": result.status,
         }
 
     @app.post("/api/drafts/{draft_id}/cover-upload")
@@ -140,3 +171,11 @@ def create_app() -> FastAPI:
         raise HTTPException(status_code=404, detail="Uploaded cover not found")
 
     return app
+
+
+def _default_publishers() -> dict[PlatformName, Publisher]:
+    return {
+        PlatformName.XIAOHONGSHU: XiaohongshuPublisher(),
+        PlatformName.DOUYIN: DouyinPublisher(),
+        PlatformName.WECHAT_CHANNELS: WechatChannelsPublisher(),
+    }

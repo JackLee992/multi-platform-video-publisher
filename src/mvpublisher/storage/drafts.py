@@ -72,6 +72,14 @@ class DraftRepository:
         self._validate_draft_id(draft_id)
         return DraftRepository._load_from_path(self._path(draft_id))
 
+    def write_snapshot(self, draft: PublishDraft, target_path: Path) -> Path:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(
+            json.dumps(draft.model_dump(mode="json"), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return target_path
+
     @staticmethod
     def _load_from_path(path: Path) -> PublishDraft:
         return PublishDraft.model_validate_json(path.read_text(encoding="utf-8"))

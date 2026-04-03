@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import DraftApprovalStatus, PlatformName
 from mvpublisher.publishers.base import PublishResult
 from mvpublisher.storage.drafts import DraftRepository
@@ -86,10 +87,12 @@ def test_publish_draft_from_repository_persists_platform_results(tmp_path):
             artifact_root.mkdir(parents=True, exist_ok=True)
             result = PublishResult(
                 platform_name=self.platform_name,
-                status="paused_for_manual_completion",
+                status="awaiting_manual_publish",
                 submitted=False,
                 result_url="https://creator.xiaohongshu.com/publish/publish",
                 error_message=None,
+                execution_mode=ExecutionMode.AUTOFILL_ONLY,
+                awaiting_manual_publish=True,
             )
             result.write(artifact_root)
             return result
@@ -99,10 +102,13 @@ def test_publish_draft_from_repository_persists_platform_results(tmp_path):
         repository=repository,
         publishers={PlatformName.XIAOHONGSHU: FakePublisher()},
         session_factory=lambda platform_name: object(),
+        execution_mode=ExecutionMode.AUTOFILL_ONLY,
     )
 
     assert len(results) == 1
     assert saved_draft.platform_drafts[0].platform_name == PlatformName.XIAOHONGSHU
-    assert saved_draft.platform_drafts[0].execution_status == "paused_for_manual_completion"
+    assert saved_draft.platform_drafts[0].execution_status == "awaiting_manual_publish"
     assert saved_draft.platform_drafts[0].result_url
     assert saved_draft.platform_drafts[0].artifacts
+    assert saved_draft.publish_history
+    assert saved_draft.publish_history[0].results[0].awaiting_manual_publish is True
