@@ -10,6 +10,7 @@ from mvpublisher.sessions.playwright_fallback import (
 )
 
 from .base import PublishResult
+from .signals import build_platform_signal
 
 
 class XiaohongshuPublisher:
@@ -23,15 +24,16 @@ class XiaohongshuPublisher:
         artifact_root: Path,
     ) -> PublishResult:
         finished_at = datetime.now(timezone.utc)
+        signal = build_platform_signal(PlatformName.XIAOHONGSHU, draft.execution_mode)
         result = PublishResult(
             platform_name=self.platform_name,
-            status="awaiting_manual_publish",
-            submitted=False,
-            result_url=self.publish_url,
+            status=signal.status,
+            submitted=draft.execution_mode.value == "autopublish",
+            result_url=signal.result_url,
             error_message=None,
-            success_signal="editor_ready",
+            success_signal=signal.success_signal,
             execution_mode=draft.execution_mode,
-            awaiting_manual_publish=True,
+            awaiting_manual_publish=signal.awaiting_manual_publish,
             finished_at=finished_at,
         )
         try:
@@ -48,7 +50,7 @@ class XiaohongshuPublisher:
                 platform_name=self.platform_name,
                 status="failed",
                 submitted=False,
-                result_url=self.publish_url,
+                result_url=signal.result_url,
                 error_message=str(exc),
                 error_type=exc.__class__.__name__,
                 execution_mode=draft.execution_mode,
