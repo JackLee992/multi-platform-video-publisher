@@ -117,6 +117,43 @@ run_osascript() {
   osascript - "$@"
 }
 
+focus_platform_tab() {
+  local platform_name="$1"
+  local url_prefix=""
+
+  case "$platform_name" in
+    xiaohongshu)
+      url_prefix="https://creator.xiaohongshu.com/"
+      ;;
+    douyin)
+      url_prefix="https://creator.douyin.com/"
+      ;;
+    wechat_channels)
+      url_prefix="https://channels.weixin.qq.com/platform/post/"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  activate
+  repeat with w in windows
+    repeat with i from 1 to (count of tabs of w)
+      set t to tab i of w
+      if (URL of t as text) starts with "${url_prefix}" then
+        set active tab index of w to i
+        set index of w to 1
+        return "focused"
+      end if
+    end repeat
+  end repeat
+end tell
+return "not_found"
+APPLESCRIPT
+}
+
 upload_xiaohongshu() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
@@ -404,6 +441,8 @@ run_platform() {
       exit 1
       ;;
   esac
+
+  focus_platform_tab "$platform_name" >/dev/null
 }
 
 if [[ "$PLATFORM" == "all" ]]; then
