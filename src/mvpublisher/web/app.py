@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from mvpublisher.approval.service import ApprovalService
 from mvpublisher.config import AppConfig
 from mvpublisher.execution_modes import ExecutionMode
-from mvpublisher.models.draft import PlatformName
+from mvpublisher.models.draft import PlatformDraft, PlatformName
 from mvpublisher.publishers import (
     DouyinPublisher,
     Publisher,
@@ -102,13 +102,24 @@ def create_app(
     @app.post("/api/drafts/{draft_id}/approval")
     async def approve_draft(draft_id: str, payload: ApprovalPayload):
         draft = repository.load(draft_id)
+        selected_platforms = [
+            PlatformName(platform_name) for platform_name in payload.selected_platforms
+        ]
+        existing_platform_drafts = {
+            platform_draft.platform_name: platform_draft
+            for platform_draft in draft.platform_drafts
+        }
         updated_draft = draft.model_copy(
             update={
                 "selected_title": payload.selected_title,
                 "selected_cover_path": Path(payload.selected_cover_path),
-                "selected_platforms": [
-                    PlatformName(platform_name)
-                    for platform_name in payload.selected_platforms
+                "selected_platforms": selected_platforms,
+                "platform_drafts": [
+                    existing_platform_drafts.get(
+                        platform_name,
+                        PlatformDraft(platform_name=platform_name),
+                    )
+                    for platform_name in selected_platforms
                 ],
             }
         )

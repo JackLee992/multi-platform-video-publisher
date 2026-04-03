@@ -3,13 +3,13 @@ from datetime import datetime, timezone
 
 from mvpublisher.models.draft import PlatformName
 from mvpublisher.models.draft import PublishDraft
-from mvpublisher.sessions.browser_reuse import open_url_in_google_chrome
 from mvpublisher.sessions.playwright_fallback import (
     SessionResolution,
     open_url_with_persistent_playwright,
 )
 
 from .base import PublishResult
+from .chrome_current_session import run_current_session_publish_script
 from .signals import build_platform_signal
 
 
@@ -39,7 +39,10 @@ class XiaohongshuPublisher:
         try:
             if isinstance(session_resolution, SessionResolution):
                 if session_resolution.mode == "browser_reuse":
-                    open_url_in_google_chrome(self.publish_url)
+                    run_current_session_publish_script(
+                        draft=draft,
+                        platform_name=PlatformName.XIAOHONGSHU,
+                    )
                 else:
                     open_url_with_persistent_playwright(
                         state_dir=session_resolution.state_dir,

@@ -3,7 +3,14 @@ from pathlib import Path
 from datetime import datetime, timezone
 import pytest
 
-from mvpublisher.models.draft import DraftApprovalStatus, PlatformName, PublishDraft
+import json
+
+from mvpublisher.models.draft import (
+    DraftApprovalStatus,
+    PlatformDraft,
+    PlatformName,
+    PublishDraft,
+)
 from mvpublisher.storage.drafts import DraftRepository
 
 
@@ -55,3 +62,27 @@ def test_repository_save_refreshes_updated_at(tmp_path):
     assert saved.updated_at > draft.updated_at
     loaded = repo.load(saved.draft_id)
     assert loaded.updated_at == saved.updated_at
+
+
+def test_repository_load_reconciles_extra_platform_drafts(tmp_path):
+    repo = DraftRepository(tmp_path / "drafts")
+    draft = PublishDraft.new(source_video_path=tmp_path / "demo.mp4").model_copy(
+        update={
+            "selected_platforms": [PlatformName.XIAOHONGSHU],
+            "platform_drafts": [PlatformDraft(platform_name=PlatformName.XIAOHONGSHU)],
+        }
+    )
+    saved = repo.save(draft)
+    payload = json.loads((tmp_path / "drafts" / f"{saved.draft_id}.json").read_text(encoding="utf-8"))
+    payload["platform_drafts"].append({"platform_name": "douyin", "enabled": True})
+    (tmp_path / "drafts" / f"{saved.draft_id}.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    loaded = repo.load(saved.draft_id)
+
+    assert loaded.selected_platforms == [PlatformName.XIAOHONGSHU]
+    assert [item.platform_name for item in loaded.platform_drafts] == [
+        PlatformName.XIAOHONGSHU
+    ]

@@ -4,7 +4,12 @@ import base64
 from fastapi.testclient import TestClient
 
 from mvpublisher.execution_modes import ExecutionMode
-from mvpublisher.models.draft import DraftApprovalStatus, PlatformName, PublishDraft
+from mvpublisher.models.draft import (
+    DraftApprovalStatus,
+    PlatformDraft,
+    PlatformName,
+    PublishDraft,
+)
 from mvpublisher.publishers.base import PublishResult
 from mvpublisher.storage.drafts import DraftRepository
 from mvpublisher.web.app import create_app
@@ -187,6 +192,48 @@ def test_approval_api_can_store_autofill_only_mode(tmp_path, monkeypatch) -> Non
     assert response.status_code == 200
     reloaded = repository.load(draft.draft_id)
     assert reloaded.execution_mode is ExecutionMode.AUTOFILL_ONLY
+
+
+def test_approval_api_reconciles_platform_drafts_with_selected_platforms(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MVPUBLISHER_HOME", str(tmp_path / "runtime"))
+    repository = DraftRepository((tmp_path / "runtime") / "drafts")
+    draft = repository.save(
+        _build_draft(tmp_path).model_copy(
+            update={
+                "selected_platforms": [
+                    PlatformName.XIAOHONGSHU,
+                    PlatformName.DOUYIN,
+                ],
+                "platform_drafts": [
+                    PlatformDraft(platform_name=PlatformName.XIAOHONGSHU),
+                    PlatformDraft(platform_name=PlatformName.DOUYIN),
+                ],
+            }
+        )
+    )
+    cover = tmp_path / "selected-cover.jpg"
+    cover.write_text("cover", encoding="utf-8")
+    client = TestClient(create_app())
+
+    response = client.post(
+        f"/api/drafts/{draft.draft_id}/approval",
+        json={
+            "selected_title": "最终标题",
+            "selected_cover_path": str(cover),
+            "selected_platforms": ["xiaohongshu"],
+            "publish_now": False,
+            "execution_mode": "autofill_only",
+        },
+    )
+
+    assert response.status_code == 200
+    reloaded = repository.load(draft.draft_id)
+    assert reloaded.selected_platforms == [PlatformName.XIAOHONGSHU]
+    assert [item.platform_name for item in reloaded.platform_drafts] == [
+        PlatformName.XIAOHONGSHU
+    ]
 
 
 def test_retry_api_appends_retry_request_to_history(tmp_path, monkeypatch) -> None:

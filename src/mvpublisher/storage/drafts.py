@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
+
 from mvpublisher.models.draft import PublishDraft
 
 
@@ -82,4 +84,35 @@ class DraftRepository:
 
     @staticmethod
     def _load_from_path(path: Path) -> PublishDraft:
-        return PublishDraft.model_validate_json(path.read_text(encoding="utf-8"))
+        raw_text = path.read_text(encoding="utf-8")
+        try:
+            return PublishDraft.model_validate_json(raw_text)
+        except ValidationError as exc:
+            payload = json.loads(raw_text)
+            sanitized = _sanitize_legacy_payload(payload)
+            if sanitized == payload:
+                raise exc
+            path.write_text(
+                json.dumps(sanitized, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return PublishDraft.model_validate(sanitized)
+
+
+def _sanitize_legacy_payload(payload: dict) -> dict:
+    selected_platforms = set(payload.get("selected_platforms", []))
+    platform_drafts = payload.get("platform_drafts", [])
+    if not isinstance(platform_drafts, list):
+        return payload
+
+    filtered_platform_drafts = [
+        platform_draft
+        for platform_draft in platform_drafts
+        if platform_draft.get("platform_name") in selected_platforms
+    ]
+    if filtered_platform_drafts == platform_drafts:
+        return payload
+
+    updated_payload = dict(payload)
+    updated_payload["platform_drafts"] = filtered_platform_drafts
+    return updated_payload
