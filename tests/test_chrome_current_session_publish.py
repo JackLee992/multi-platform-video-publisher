@@ -95,6 +95,18 @@ def test_current_session_script_ensures_platform_tab_exists() -> None:
     assert "wait_for_fill_target()" in content
 
 
+def test_current_session_script_focuses_platform_before_automation_steps() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'focus_platform_tab "$platform_name" >/dev/null' in content
+    assert content.count('focus_platform_tab "$platform_name" >/dev/null') >= 2
+
+
 def test_current_session_script_uses_inputevent_for_xiaohongshu_title_fill() -> None:
     script_path = (
         Path(__file__).resolve().parents[1]

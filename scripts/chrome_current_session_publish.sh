@@ -679,12 +679,14 @@ run_platform() {
   local platform_name="$1"
   echo "==> ${platform_name}"
   ensure_platform_tab "$platform_name"
+  focus_platform_tab "$platform_name" >/dev/null
 
   case "$platform_name" in
     xiaohongshu)
       echo "[${platform_name}] upload_start"
       upload_xiaohongshu
       poll_xiaohongshu_upload
+      focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_xiaohongshu
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
@@ -696,11 +698,13 @@ run_platform() {
     douyin)
       echo "[${platform_name}] discard_old_draft_check"
       handle_douyin_resume_prompt
+      focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] upload_start"
       upload_douyin
       poll_douyin_upload
       echo "[${platform_name}] discard_old_draft_check"
       handle_douyin_resume_prompt
+      focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_douyin
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
@@ -712,11 +716,13 @@ run_platform() {
     wechat_channels)
       echo "[${platform_name}] dialog_check"
       handle_wechat_channels_dialogs
+      focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] upload_start"
       upload_wechat_channels
       poll_wechat_channels_upload
       echo "[${platform_name}] dialog_check"
       handle_wechat_channels_dialogs
+      focus_platform_tab "$platform_name" >/dev/null
       echo "[${platform_name}] fill_start"
       fill_wechat_channels
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
