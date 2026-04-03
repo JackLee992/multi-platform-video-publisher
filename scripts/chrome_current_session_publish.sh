@@ -119,17 +119,17 @@ run_osascript() {
 
 focus_platform_tab() {
   local platform_name="$1"
-  local url_prefix=""
+  local match_expr=""
 
   case "$platform_name" in
     xiaohongshu)
-      url_prefix="https://creator.xiaohongshu.com/"
+      match_expr='url starts with "https://creator.xiaohongshu.com/publish/publish" or url starts with "https://creator.xiaohongshu.com/publish/success"'
       ;;
     douyin)
-      url_prefix="https://creator.douyin.com/"
+      match_expr='url starts with "https://creator.douyin.com/creator-micro/content/upload" or url starts with "https://creator.douyin.com/creator-micro/content/post/video" or url starts with "https://creator.douyin.com/creator-micro/content/manage"'
       ;;
     wechat_channels)
-      url_prefix="https://channels.weixin.qq.com/platform/post/"
+      match_expr='url starts with "https://channels.weixin.qq.com/platform/post/create" or url starts with "https://channels.weixin.qq.com/platform/post/list"'
       ;;
     *)
       return 0
@@ -139,16 +139,23 @@ focus_platform_tab() {
   run_osascript <<APPLESCRIPT
 tell application "Google Chrome"
   activate
+  set matchedWindowIndex to 0
+  set matchedTabIndex to 0
   repeat with w in windows
     repeat with i from 1 to (count of tabs of w)
       set t to tab i of w
-      if (URL of t as text) starts with "${url_prefix}" then
-        set active tab index of w to i
-        set index of w to 1
-        return "focused"
+      set tabUrl to (URL of t as text)
+      if ${match_expr//url/tabUrl} then
+        set matchedWindowIndex to index of w
+        set matchedTabIndex to i
       end if
     end repeat
   end repeat
+  if matchedWindowIndex is not 0 then
+    set index of window matchedWindowIndex to 1
+    set active tab index of window 1 to matchedTabIndex
+    return "focused"
+  end if
 end tell
 return "not_found"
 APPLESCRIPT
