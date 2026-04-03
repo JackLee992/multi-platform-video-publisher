@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from mvpublisher.approval.service import ApprovalError, ApprovalService
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import DraftApprovalStatus, PlatformName, PublishDraft
 
 
@@ -29,6 +30,7 @@ def test_approve_marks_draft_immediate_when_publish_now(tmp_path):
 
     assert result.approval_status == DraftApprovalStatus.APPROVED
     assert result.publish_mode == "immediate"
+    assert result.execution_mode is ExecutionMode.AUTOPUBLISH
 
 
 def test_approve_marks_draft_manual_hold_when_not_publish_now(tmp_path):
@@ -39,6 +41,7 @@ def test_approve_marks_draft_manual_hold_when_not_publish_now(tmp_path):
 
     assert result.approval_status == DraftApprovalStatus.APPROVED
     assert result.publish_mode == "manual_hold"
+    assert result.execution_mode is ExecutionMode.AUTOFILL_ONLY
 
 
 def test_approve_requires_existing_source_video(tmp_path):

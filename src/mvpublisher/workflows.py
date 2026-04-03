@@ -5,7 +5,7 @@ from typing import Callable, Mapping, Optional, Protocol
 from mvpublisher.media.cover_frames import extract_cover_frames
 from mvpublisher.models.draft import PlatformDraft, PlatformName, PublishDraft
 from mvpublisher.publishers.base import PublishResult, Publisher
-from mvpublisher.publishers.runner import run_publishers
+from mvpublisher.publishers.runner import apply_publish_results, run_publishers
 from mvpublisher.sessions.playwright_fallback import SessionResolution
 from mvpublisher.storage.drafts import DraftRepository
 from mvpublisher.suggestions.generator import build_suggestions
@@ -91,8 +91,12 @@ def publish_draft_from_repository(
         )
         for platform_name in draft.selected_platforms
     ]
+    updated_draft = apply_publish_results(
+        draft.model_copy(update={"platform_drafts": updated_platform_drafts}),
+        results,
+    )
     saved_draft = repository.save(
-        draft.model_copy(update={"platform_drafts": updated_platform_drafts})
+        updated_draft
     )
     return saved_draft, results
 

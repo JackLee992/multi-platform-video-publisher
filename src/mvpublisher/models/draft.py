@@ -2,11 +2,11 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Set
-from typing import List
-from typing import Optional
+from typing import List, Optional, Set
 
 from pydantic import BaseModel, Field, model_validator
+
+from mvpublisher.execution_modes import ExecutionMode
 
 
 class DraftApprovalStatus(str, Enum):
@@ -33,6 +33,40 @@ class PlatformDraft(BaseModel):
     artifacts: List[str] = Field(default_factory=list)
 
 
+class ValidationStatus(str, Enum):
+    UNKNOWN = "unknown"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class ValidationError(BaseModel):
+    field: str
+    message: str
+    platforms: List[PlatformName] = Field(default_factory=list)
+
+
+class PlatformPublishRecord(BaseModel):
+    platform_name: PlatformName
+    status: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    error_type: Optional[str] = None
+    screenshot_path: Optional[Path] = None
+    result_url: Optional[str] = None
+    success_signal: Optional[str] = None
+    attempt: int = 1
+    execution_mode: ExecutionMode = ExecutionMode.AUTOPUBLISH
+    awaiting_manual_publish: bool = False
+
+
+class PublishHistoryEntry(BaseModel):
+    history_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    execution_mode: ExecutionMode = ExecutionMode.AUTOPUBLISH
+    results: List[PlatformPublishRecord] = Field(default_factory=list)
+
+
 class PublishDraft(BaseModel):
     draft_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -47,10 +81,14 @@ class PublishDraft(BaseModel):
     description_suggestions: List[str] = Field(default_factory=list)
     approval_status: DraftApprovalStatus = DraftApprovalStatus.DRAFT
     publish_mode: str = "manual_hold"
+    execution_mode: ExecutionMode = ExecutionMode.AUTOPUBLISH
+    validation_status: ValidationStatus = ValidationStatus.UNKNOWN
+    validation_errors: List[ValidationError] = Field(default_factory=list)
     selected_title: Optional[str] = None
     selected_cover_path: Optional[Path] = None
     selected_platforms: List[PlatformName] = Field(default_factory=list)
     platform_drafts: List[PlatformDraft] = Field(default_factory=list)
+    publish_history: List[PublishHistoryEntry] = Field(default_factory=list)
 
     @classmethod
     def new(cls, source_video_path: Path) -> "PublishDraft":

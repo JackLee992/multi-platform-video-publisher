@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
+from typing import Optional
 
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import DraftApprovalStatus, PublishDraft
+from mvpublisher.validation.service import ValidationService
 
 
 class ApprovalError(Exception):
@@ -8,27 +11,33 @@ class ApprovalError(Exception):
 
 
 class ApprovalService:
+    def __init__(self, validation_service: Optional[ValidationService] = None):
+        self.validation_service = validation_service or ValidationService()
+
     def is_approved(self, draft: PublishDraft) -> bool:
         return draft.approval_status == DraftApprovalStatus.APPROVED
 
-    def approve(self, draft: PublishDraft, publish_now: bool) -> PublishDraft:
-        if not draft.source_video_path.exists() or not draft.source_video_path.is_file():
-            raise ApprovalError("source_video_path must point to an existing file")
-        if not draft.selected_title or not draft.selected_title.strip():
-            raise ApprovalError("selected_title must be present")
-        if (
-            draft.selected_cover_path is None
-            or not draft.selected_cover_path.exists()
-            or not draft.selected_cover_path.is_file()
-        ):
-            raise ApprovalError("selected_cover_path must be present and exist")
-        if not draft.selected_platforms:
-            raise ApprovalError("selected_platforms must be non-empty")
+    def approve(
+        self,
+        draft: PublishDraft,
+        publish_now: bool,
+        execution_mode: Optional[ExecutionMode] = None,
+    ) -> PublishDraft:
+        effective_mode = execution_mode or (
+            ExecutionMode.AUTOPUBLISH if publish_now else ExecutionMode.AUTOFILL_ONLY
+        )
+        draft = draft.model_copy(update={"execution_mode": effective_mode})
+        status, errors = self.validation_service.validate(draft)
+        if errors:
+            raise ApprovalError(errors[0].message)
 
         return draft.model_copy(
             update={
                 "approval_status": DraftApprovalStatus.APPROVED,
                 "publish_mode": "immediate" if publish_now else "manual_hold",
+                "execution_mode": effective_mode,
+                "validation_status": status,
+                "validation_errors": errors,
                 "updated_at": datetime.now(timezone.utc),
             }
         )

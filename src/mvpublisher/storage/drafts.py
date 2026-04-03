@@ -40,6 +40,12 @@ class DraftRepository:
                 draft_ids.append(path.stem)
         return draft_ids
 
+    def list(self) -> list[PublishDraft]:
+        drafts: list[PublishDraft] = []
+        for draft_id in self.list_ids():
+            drafts.append(self.load(draft_id))
+        return drafts
+
     def save(self, draft: PublishDraft) -> PublishDraft:
         self._validate_draft_id(draft.draft_id)
         draft_to_save = draft.model_copy(

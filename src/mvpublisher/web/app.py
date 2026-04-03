@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from mvpublisher.approval.service import ApprovalService
 from mvpublisher.config import AppConfig
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import PlatformName
 from mvpublisher.storage.drafts import DraftRepository
 
@@ -17,11 +18,17 @@ class ApprovalPayload(BaseModel):
     selected_cover_path: str
     selected_platforms: list[str]
     publish_now: bool = False
+    execution_mode: str = ExecutionMode.AUTOFILL_ONLY.value
 
 
 class CoverUploadPayload(BaseModel):
     filename: str
     content_base64: str
+
+
+class RetryPayload(BaseModel):
+    platform_name: str
+    execution_mode: str = ExecutionMode.AUTOFILL_ONLY.value
 
 
 def create_app() -> FastAPI:
@@ -35,11 +42,15 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        drafts = [repository.load(draft_id) for draft_id in repository.list_ids()]
+        drafts = repository.list()
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"request": request, "drafts": drafts},
+            {
+                "request": request,
+                "drafts": drafts,
+                "execution_mode_options": [mode.value for mode in ExecutionMode],
+            },
         )
 
     @app.get("/drafts/{draft_id}", response_class=HTMLResponse)
@@ -52,6 +63,7 @@ def create_app() -> FastAPI:
                 "request": request,
                 "draft": draft,
                 "platform_options": [platform.value for platform in PlatformName],
+                "execution_mode_options": [mode.value for mode in ExecutionMode],
             },
         )
 
@@ -71,12 +83,26 @@ def create_app() -> FastAPI:
         approved_draft = approval_service.approve(
             updated_draft,
             publish_now=payload.publish_now,
+            execution_mode=ExecutionMode(payload.execution_mode),
         )
         saved_draft = repository.save(approved_draft)
         return {
             "draft_id": saved_draft.draft_id,
             "approval_status": saved_draft.approval_status.value,
             "publish_mode": saved_draft.publish_mode,
+            "execution_mode": saved_draft.execution_mode.value,
+        }
+
+    @app.post("/api/drafts/{draft_id}/retry")
+    async def retry_platform(draft_id: str, payload: RetryPayload):
+        draft = repository.load(draft_id)
+        updated = repository.save(
+            draft.model_copy(update={"execution_mode": ExecutionMode(payload.execution_mode)})
+        )
+        return {
+            "draft_id": updated.draft_id,
+            "platform_name": payload.platform_name,
+            "execution_mode": updated.execution_mode.value,
         }
 
     @app.post("/api/drafts/{draft_id}/cover-upload")

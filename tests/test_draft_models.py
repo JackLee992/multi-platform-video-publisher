@@ -1,4 +1,5 @@
 from mvpublisher.config import AppConfig
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.paths import runtime_root
 from pathlib import Path
 from datetime import datetime, timezone
@@ -8,7 +9,11 @@ from mvpublisher.models.draft import (
     DraftApprovalStatus,
     PlatformDraft,
     PlatformName,
+    PlatformPublishRecord,
     PublishDraft,
+    PublishHistoryEntry,
+    ValidationError,
+    ValidationStatus,
 )
 
 
@@ -57,6 +62,9 @@ def test_publish_draft_requires_confirmation_fields():
     assert len(draft.draft_id) == 32
     assert draft.approval_status is DraftApprovalStatus.DRAFT
     assert draft.publish_mode == "manual_hold"
+    assert draft.execution_mode is ExecutionMode.AUTOPUBLISH
+    assert draft.validation_status is ValidationStatus.UNKNOWN
+    assert draft.validation_errors == []
     assert isinstance(draft.created_at, datetime)
     assert isinstance(draft.updated_at, datetime)
     assert draft.created_at.tzinfo == timezone.utc
@@ -79,6 +87,7 @@ def test_publish_draft_requires_confirmation_fields():
     assert draft.selected_cover_path is None
     assert draft.selected_platforms == []
     assert draft.platform_drafts == []
+    assert draft.publish_history == []
 
 
 def test_platform_draft_shape_contract():
@@ -88,6 +97,47 @@ def test_platform_draft_shape_contract():
     assert draft.scheduled_time is None
     assert draft.execution_status == "pending"
     assert draft.artifacts == []
+
+
+def test_publish_draft_supports_validation_and_history_models(tmp_path):
+    started = datetime.now(timezone.utc)
+    finished = datetime.now(timezone.utc)
+    draft = PublishDraft.new(source_video_path=tmp_path / "demo.mp4").model_copy(
+        update={
+            "execution_mode": ExecutionMode.AUTOFILL_ONLY,
+            "validation_status": ValidationStatus.FAILED,
+            "validation_errors": [
+                ValidationError(
+                    field="selected_title",
+                    message="selected_title must be present",
+                    platforms=[PlatformName.XIAOHONGSHU],
+                )
+            ],
+            "publish_history": [
+                PublishHistoryEntry(
+                    execution_mode=ExecutionMode.AUTOFILL_ONLY,
+                    results=[
+                        PlatformPublishRecord(
+                            platform_name=PlatformName.XIAOHONGSHU,
+                            status="awaiting_manual_publish",
+                            started_at=started,
+                            finished_at=finished,
+                            success_signal="editor_ready",
+                            execution_mode=ExecutionMode.AUTOFILL_ONLY,
+                            awaiting_manual_publish=True,
+                        )
+                    ],
+                )
+            ],
+        }
+    )
+
+    assert draft.execution_mode is ExecutionMode.AUTOFILL_ONLY
+    assert draft.validation_status is ValidationStatus.FAILED
+    assert draft.validation_errors[0].field == "selected_title"
+    assert draft.publish_history[0].execution_mode is ExecutionMode.AUTOFILL_ONLY
+    assert draft.publish_history[0].results[0].awaiting_manual_publish is True
+    assert draft.publish_history[0].results[0].success_signal == "editor_ready"
 
 
 def test_publish_draft_rejects_invalid_platform_drafts(tmp_path):

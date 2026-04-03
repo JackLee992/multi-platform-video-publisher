@@ -3,9 +3,10 @@ import json
 
 import pytest
 
+from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import DraftApprovalStatus, PlatformName, PublishDraft
 from mvpublisher.publishers.base import PublishResult
-from mvpublisher.publishers.runner import run_publishers
+from mvpublisher.publishers.runner import apply_publish_results, run_publishers
 from mvpublisher.publishers.xiaohongshu import XiaohongshuPublisher
 from mvpublisher.publishers.douyin import DouyinPublisher
 from mvpublisher.publishers.wechat_channels import WechatChannelsPublisher
@@ -23,6 +24,7 @@ def build_publish_draft(tmp_path: Path, platforms: list[PlatformName]) -> Publis
             "selected_cover_path": cover,
             "selected_platforms": platforms,
             "approval_status": DraftApprovalStatus.APPROVED,
+            "execution_mode": ExecutionMode.AUTOFILL_ONLY,
         }
     )
 
@@ -44,10 +46,12 @@ def test_minimal_publishers_return_paused_manual_completion_result_and_create_ar
         )
 
         assert result.platform_name == platform
-        assert result.status == "paused_for_manual_completion"
+        assert result.status == "awaiting_manual_publish"
         assert result.submitted is False
         assert result.result_url is not None
         assert result.error_message is None
+        assert result.awaiting_manual_publish is True
+        assert result.execution_mode is ExecutionMode.AUTOFILL_ONLY
         assert artifact_root.exists()
 
 
@@ -65,7 +69,7 @@ def test_xiaohongshu_publisher_writes_artifact_on_pause(tmp_path):
         artifact_root=artifact_root,
     )
 
-    assert result.status in {"success", "paused_for_manual_completion", "failed"}
+    assert result.status in {"success", "awaiting_manual_publish", "failed"}
     artifact = artifact_root / "publish_result.json"
     assert artifact.exists()
     payload = json.loads(artifact.read_text(encoding="utf-8"))
@@ -102,8 +106,8 @@ def test_run_publishers_iterates_selected_platforms_and_calls_session_factory(tm
         PlatformName.DOUYIN.value,
     ]
     assert [result.status for result in results] == [
-        "paused_for_manual_completion",
-        "paused_for_manual_completion",
+        "awaiting_manual_publish",
+        "awaiting_manual_publish",
     ]
     assert requested_platforms == [
         PlatformName.XIAOHONGSHU,
@@ -115,6 +119,28 @@ def test_run_publishers_iterates_selected_platforms_and_calls_session_factory(tm
     assert (tmp_path / "artifacts" / PlatformName.XIAOHONGSHU.value).is_dir()
     assert (tmp_path / "artifacts" / PlatformName.DOUYIN.value).is_dir()
     assert not (tmp_path / "artifacts" / PlatformName.WECHAT_CHANNELS.value).exists()
+
+
+def test_apply_publish_results_appends_mode_aware_history(tmp_path):
+    draft = build_publish_draft(tmp_path, [PlatformName.XIAOHONGSHU])
+    results = [
+        PublishResult(
+            platform_name=PlatformName.XIAOHONGSHU.value,
+            status="awaiting_manual_publish",
+            submitted=False,
+            result_url="https://example.com",
+            error_message=None,
+            success_signal="editor_ready",
+            execution_mode=ExecutionMode.AUTOFILL_ONLY,
+            awaiting_manual_publish=True,
+        )
+    ]
+
+    updated = apply_publish_results(draft, results)
+
+    assert len(updated.publish_history) == 1
+    assert updated.publish_history[0].execution_mode is ExecutionMode.AUTOFILL_ONLY
+    assert updated.publish_history[0].results[0].awaiting_manual_publish is True
 
 
 def test_run_publishers_requires_approved_draft(tmp_path):
