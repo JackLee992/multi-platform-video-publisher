@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import typer
 
@@ -56,11 +57,17 @@ def publish_draft(draft_id: str) -> None:
 
 @app.command("serve-review")
 def serve_review(draft_id: str, host: str = "127.0.0.1", port: int = 8000) -> None:
+    review_url = f"http://{host}:{port}/drafts/{draft_id}"
     typer.echo(f"serve-review:{draft_id}")
-    typer.echo(f"Review URL: http://{host}:{port}/drafts/{draft_id}")
+    typer.echo(f"Review URL: {review_url}")
+    _open_review_url_in_google_chrome(review_url)
     import uvicorn
 
     uvicorn.run(create_app(), host=host, port=port)
+
+
+def _open_review_url_in_google_chrome(url: str) -> None:
+    subprocess.Popen(["open", "-a", "Google Chrome", url])
 
 def _find_video_skill_script() -> Path:
     for base in [Path.cwd(), *Path.cwd().parents, Path(__file__).resolve(), *Path(__file__).resolve().parents]:

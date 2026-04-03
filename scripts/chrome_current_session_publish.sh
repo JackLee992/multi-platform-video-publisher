@@ -117,6 +117,91 @@ run_osascript() {
   osascript - "$@"
 }
 
+platform_editor_url() {
+  local platform_name="$1"
+
+  case "$platform_name" in
+    xiaohongshu)
+      echo "https://creator.xiaohongshu.com/publish/publish"
+      ;;
+    douyin)
+      echo "https://creator.douyin.com/creator-micro/content/upload"
+      ;;
+    wechat_channels)
+      echo "https://channels.weixin.qq.com/platform/post/create"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+wait_for_platform_tab() {
+  local platform_name="$1"
+  local match_expr=""
+
+  case "$platform_name" in
+    xiaohongshu)
+      match_expr='tabUrl starts with "https://creator.xiaohongshu.com/publish/publish"'
+      ;;
+    douyin)
+      match_expr='tabUrl starts with "https://creator.douyin.com/creator-micro/content/upload" or tabUrl starts with "https://creator.douyin.com/creator-micro/content/post/video"'
+      ;;
+    wechat_channels)
+      match_expr='tabUrl starts with "https://channels.weixin.qq.com/platform/post/create"'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  repeat 20 times
+    repeat with w in windows
+      repeat with i from 1 to (count of tabs of w)
+        set t to tab i of w
+        set tabUrl to (URL of t as text)
+        if ${match_expr} then
+          return "ready"
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+end tell
+return "timeout"
+APPLESCRIPT
+}
+
+ensure_platform_tab() {
+  local platform_name="$1"
+  local editor_url
+  editor_url="$(platform_editor_url "$platform_name")"
+
+  if [[ "$(wait_for_platform_tab "$platform_name")" == "ready" ]]; then
+    return 0
+  fi
+
+  run_osascript <<APPLESCRIPT
+tell application "Google Chrome"
+  activate
+  if (count of windows) is 0 then
+    make new window
+  end if
+  tell front window
+    make new tab with properties {URL:"${editor_url}"}
+    set active tab index to (count of tabs)
+  end tell
+end tell
+APPLESCRIPT
+
+  if [[ "$(wait_for_platform_tab "$platform_name")" != "ready" ]]; then
+    echo "Timed out waiting for ${platform_name} editor tab" >&2
+    exit 1
+  fi
+}
+
 focus_platform_tab() {
   local platform_name="$1"
   local match_expr=""
@@ -414,6 +499,7 @@ APPLESCRIPT
 run_platform() {
   local platform_name="$1"
   echo "==> ${platform_name}"
+  ensure_platform_tab "$platform_name"
 
   case "$platform_name" in
     xiaohongshu)

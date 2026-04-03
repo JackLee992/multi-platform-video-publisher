@@ -78,3 +78,30 @@ def test_list_ids_filters_invalid_json_stems(tmp_path) -> None:
     repo = DraftRepository(drafts_root)
 
     assert repo.list_ids() == [valid_id]
+
+
+def test_cli_serve_review_opens_google_chrome(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MVPUBLISHER_HOME", str(tmp_path / "runtime"))
+    opened: dict[str, str] = {}
+    uvicorn_calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli_module,
+        "_open_review_url_in_google_chrome",
+        lambda url: opened.setdefault("url", url),
+    )
+
+    class FakeUvicorn:
+        @staticmethod
+        def run(app, host, port):
+            uvicorn_calls["host"] = host
+            uvicorn_calls["port"] = port
+
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", FakeUvicorn)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["serve-review", "a" * 32, "--host", "127.0.0.1", "--port", "8123"])
+
+    assert result.exit_code == 0
+    assert opened["url"] == "http://127.0.0.1:8123/drafts/" + ("a" * 32)
+    assert uvicorn_calls == {"host": "127.0.0.1", "port": 8123}

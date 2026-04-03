@@ -77,3 +77,17 @@ def test_run_current_session_publish_script_adds_skip_publish_for_autofill_only(
     command = captured["command"]
     assert PlatformName.WECHAT_CHANNELS.value in command
     assert "--skip-publish" in command
+
+
+def test_current_session_script_ensures_platform_tab_exists() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "ensure_platform_tab()" in content
+    assert "wait_for_platform_tab()" in content
+    assert "ensure_platform_tab \"$platform_name\"" in content
+    assert "wait_for_platform_tab \"$platform_name\"" in content
