@@ -13,6 +13,15 @@
 1. 尽量复用你当前已经登录的 Chrome 会话
 2. 在真正发布前，保留人工确认这道安全门
 
+当前推荐的默认使用约定是：
+
+1. 默认走“标准流程”
+   - 创建草稿
+   - 打开审核页
+   - 人工确认
+   - 再执行发布
+2. 只有做回归测试、重复模板验证，或者你明确要“直接按模板发”时，才走 Chrome 当前会话脚本
+
 ## 这个项目能做什么
 
 - 从本地视频路径创建发布草稿
@@ -183,10 +192,10 @@ python -m playwright install chromium
 执行：
 
 ```bash
-./.venv/bin/python -m mvpublisher.cli serve-review
+./.venv/bin/python -m mvpublisher.cli serve-review <draft-id>
 ```
 
-然后在浏览器中打开本地页面，查看草稿详情。
+命令会默认用 `Google Chrome` 打开本地审核页。
 
 审核阶段建议你重点确认：
 
@@ -273,16 +282,19 @@ python -m playwright install chromium
 ```bash
 ./scripts/chrome_current_session_publish.sh \
   --video /absolute/path/to/video.mov \
+  --cover /absolute/path/to/cover.jpg \
   --title "第二次三端测试"
 ```
 
 这个脚本会：
 
 - 复用当前 Chrome 已打开的平台发布页
+- 如果目标发布页没开，会主动补开
+- 在执行前主动把 Chrome 和目标平台标签页切到前台
 - 在本地启动或复用一个文件服务
 - 通过 AppleScript 向当前页面注入 JS
 - 把本地视频包装成 `File` 并塞进页面的 `input[type=file]`
-- 自动填写最小标题字段
+- 自动填写标题、正文，并在部分平台执行封面动作
 - 默认继续点击最终发布
 
 如果你只想走到“已上传并已填字段”，不立即提交，可以加：
@@ -290,6 +302,7 @@ python -m playwright install chromium
 ```bash
 ./scripts/chrome_current_session_publish.sh \
   --video /absolute/path/to/video.mov \
+  --cover /absolute/path/to/cover.jpg \
   --title "第二次三端测试" \
   --skip-publish
 ```
@@ -299,15 +312,56 @@ python -m playwright install chromium
 ```bash
 ./scripts/chrome_current_session_publish.sh \
   --video /absolute/path/to/video.mov \
+  --cover /absolute/path/to/cover.jpg \
   --title "第二次三端测试" \
   --platform xiaohongshu
 ```
 
-当前脚本已经验证过这三条路径：
+### 当前已真机验证通过的脚本路径
 
-- 小红书：主 DOM 中的上传 input
-- 抖音：主 DOM 中的上传 input
-- 视频号：`wujie-app.shadowRoot` 中的上传 input
+下面这些结论都来自当前 Chrome 会话的真实联调，不是只看代码推断：
+
+- 小红书
+  - 视频上传：已验证
+  - 标题填入：已验证
+  - 正文填入：已验证
+  - 封面动作：已验证
+    当前走“智能推荐封面/平台内封面动作”这条稳定路径
+- 抖音
+  - 视频上传：已验证
+  - 标题填入：已验证
+  - 正文填入：已验证
+- 视频号
+  - 视频上传：已验证
+  - 短标题填入：已验证
+  - 正文填入：已验证
+  - 封面上传动作：已验证
+
+### 当前还没有完全打满的边界
+
+虽然三平台都已经能进编辑页并完成关键字段填入，但 README 这里需要明确说清楚，当前还不是“所有字段、所有平台、所有分支都 100% 产品化”的终态。
+
+- 小红书
+  - 当前封面更稳定的是“平台内推荐/默认封面动作”
+  - 还没有把“严格自定义图片上传封面”做成稳定默认路径
+- 抖音
+  - 当前标题/正文稳定
+  - 封面自动化还没有像正文一样做完整回读校验
+- 视频号
+  - 封面上传动作已经验证通过
+  - 但还建议继续补“页面回读确认封面最终替换成功”的校验
+- 三平台共同
+  - 标准流程审核页里的执行控制台已可用
+  - 但步骤状态还可以继续细化成更强的可视调试面板
+
+### 当前推荐的使用建议
+
+- 日常正式使用
+  优先走审核页标准流程，在页面里确认标题、封面、平台和执行模式后，再点“保存并执行”
+- 快速联调或脚本回归
+  直接使用 `scripts/chrome_current_session_publish.sh`
+- 对“是否真的发布成功”的判断
+  仍然要结合页面结果信号，而不是只看脚本返回值
 
 补充说明见：
 [chrome-current-session-injection.md](/Users/elainelee999/Documents/Playground/.worktrees/codex-multi-platform-publisher/multi-platform-video-publisher/docs/chrome-current-session-injection.md)
