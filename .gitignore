@@ -1,0 +1,21 @@
+.DS_Store
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+
+# Local runtime artifacts, browser state, and generated media must never be committed.
+runtime/
+
+# Local media inputs and generated outputs.
+*.mov
+*.MOV
+*.mp4
+*.MP4
+*.jpg
+*.JPG
+*.jpeg
+*.JPEG
+*.png
+*.PNG
+
