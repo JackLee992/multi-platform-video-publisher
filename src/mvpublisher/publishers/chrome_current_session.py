@@ -5,14 +5,19 @@ from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import PlatformName, PublishDraft
 
 
+def _find_current_session_publish_script() -> Path:
+    candidate_roots = [Path.cwd(), *Path.cwd().parents, *Path(__file__).resolve().parents]
+    for root in candidate_roots:
+        script_path = root / "scripts" / "chrome_current_session_publish.sh"
+        if script_path.exists():
+            return script_path
+    raise FileNotFoundError("Could not locate scripts/chrome_current_session_publish.sh")
+
+
 def run_current_session_publish_script(
     *, draft: PublishDraft, platform_name: PlatformName
 ) -> None:
-    script_path = (
-        Path(__file__).resolve().parents[3]
-        / "scripts"
-        / "chrome_current_session_publish.sh"
-    )
+    script_path = _find_current_session_publish_script()
     description = draft.summary or draft.selected_title or ""
     command = [
         "/bin/bash",
