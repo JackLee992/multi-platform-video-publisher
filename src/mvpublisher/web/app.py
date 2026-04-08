@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from mvpublisher.approval.service import ApprovalService
 from mvpublisher.config import AppConfig
 from mvpublisher.execution_modes import ExecutionMode
-from mvpublisher.models.draft import PlatformDraft, PlatformName
+from mvpublisher.models.draft import CodexDraftReview, PlatformDraft, PlatformName
 from mvpublisher.publishers import (
     DouyinPublisher,
     Publisher,
@@ -45,6 +45,16 @@ class CoverUploadPayload(BaseModel):
 class RetryPayload(BaseModel):
     platform_name: str
     execution_mode: str = ExecutionMode.AUTOFILL_ONLY.value
+
+
+class CodexReviewPayload(BaseModel):
+    status: str = "reviewed"
+    content_summary: str = ""
+    refined_transcript: str = ""
+    recommended_title: str = ""
+    title_candidates: list[str] = []
+    notes: list[str] = []
+    warnings: list[str] = []
 
 
 SessionFactory = Callable[[PlatformName], object]
@@ -153,6 +163,39 @@ def create_app(
             "platform_name": result.platform_name,
             "execution_mode": result.execution_mode.value,
             "status": result.status,
+        }
+
+    @app.post("/api/drafts/{draft_id}/codex-review")
+    async def save_codex_review(draft_id: str, payload: CodexReviewPayload):
+        draft = repository.load(draft_id)
+        review_titles = _dedupe_strings(
+            [
+                *payload.title_candidates,
+                payload.recommended_title,
+            ]
+        )
+        updated_draft = draft.model_copy(
+            update={
+                "summary": payload.content_summary.strip() or draft.summary,
+                "title_suggestions": review_titles or draft.title_suggestions,
+                "description_suggestions": [payload.content_summary.strip()] if payload.content_summary.strip() else draft.description_suggestions,
+                "codex_review": CodexDraftReview(
+                    status=payload.status,
+                    content_summary=payload.content_summary.strip() or None,
+                    refined_transcript=payload.refined_transcript.strip() or None,
+                    recommended_title=payload.recommended_title.strip() or None,
+                    title_candidates=_dedupe_strings(payload.title_candidates),
+                    notes=_dedupe_strings(payload.notes),
+                    warnings=_dedupe_strings(payload.warnings),
+                    reviewed_at=datetime.now(timezone.utc),
+                ),
+            }
+        )
+        saved_draft = repository.save(updated_draft)
+        return {
+            "draft_id": saved_draft.draft_id,
+            "codex_review_status": saved_draft.codex_review.status if saved_draft.codex_review else "pending",
+            "title_suggestions": saved_draft.title_suggestions,
         }
 
     @app.post("/api/drafts/{draft_id}/run")
@@ -285,3 +328,15 @@ def _compute_run_status(results: list[RunConsolePlatformResult]) -> str:
     if any(status == "failed" for status in statuses):
         return "partial"
     return "success"
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = (value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result

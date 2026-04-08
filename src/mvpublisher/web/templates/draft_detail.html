@@ -179,6 +179,35 @@
         <p>草稿 ID：{{ draft.draft_id }}</p>
       </section>
 
+      <section class="panel" style="margin-top: 20px;">
+        <h2>Codex 预审</h2>
+        {% if draft.codex_review %}
+        <div class="suggestion-list">
+          <div class="chip">预审状态：{{ draft.codex_review.status }}</div>
+          {% if draft.codex_review.recommended_title %}
+          <div class="chip">建议主标题：{{ draft.codex_review.recommended_title }}</div>
+          {% endif %}
+          {% if draft.codex_review.content_summary %}
+          <div class="chip">内容精校摘要：{{ draft.codex_review.content_summary }}</div>
+          {% endif %}
+          {% if draft.codex_review.refined_transcript %}
+          <div class="chip">
+            <strong>精校文稿</strong>
+            <pre>{{ draft.codex_review.refined_transcript }}</pre>
+          </div>
+          {% endif %}
+          {% for note in draft.codex_review.notes %}
+          <div class="chip">{{ note }}</div>
+          {% endfor %}
+          {% for warning in draft.codex_review.warnings %}
+          <div class="chip">注意：{{ warning }}</div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="chip">这份草稿还没有 Codex 预审结果。</div>
+        {% endif %}
+      </section>
+
       <div class="grid">
         <section class="panel">
           <h2>标题建议</h2>

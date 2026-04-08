@@ -9,8 +9,9 @@ from mvpublisher.workflows import create_draft_from_video, publish_draft_from_re
 
 
 class StubSkillRunner:
-    def __init__(self, transcript_payload: dict):
+    def __init__(self, transcript_payload: dict, transcript_metadata: dict | None = None):
         self.transcript_payload = transcript_payload
+        self.transcript_metadata = transcript_metadata or {}
 
     def run(self, source_video_path: Path, output_root: Path) -> dict:
         output_root.mkdir(parents=True, exist_ok=True)
@@ -19,11 +20,19 @@ class StubSkillRunner:
             json.dumps(self.transcript_payload, ensure_ascii=False),
             encoding="utf-8",
         )
-        return {
+        result = {
             "project_dir": str(output_root),
             "artifacts": {"transcript_json": str(transcript_path)},
             "source_video": str(source_video_path),
         }
+        if self.transcript_metadata:
+            transcript_meta_path = output_root / "transcript.meta.json"
+            transcript_meta_path.write_text(
+                json.dumps(self.transcript_metadata, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            result["artifacts"]["transcript_meta_json"] = str(transcript_meta_path)
+        return result
 
 
 def test_create_draft_from_video_persists_suggestions_and_cover_candidates(tmp_path):
@@ -56,6 +65,34 @@ def test_create_draft_from_video_persists_suggestions_and_cover_candidates(tmp_p
     assert reloaded.cover_suggestions
     assert reloaded.cover_candidate_paths
     assert reloaded.transcript_artifacts_path is not None
+
+
+def test_create_draft_from_video_uses_transcript_metadata_for_unreliable_asr(tmp_path):
+    video = tmp_path / "IMG_0040.MOV"
+    cover = tmp_path / "frame-01.jpg"
+    video.write_text("video", encoding="utf-8")
+    cover.write_text("cover", encoding="utf-8")
+    repository = DraftRepository(tmp_path / "drafts")
+
+    draft = create_draft_from_video(
+        source_video_path=video,
+        repository=repository,
+        skill_runner=StubSkillRunner(
+            {
+                "text": "How to go down to the bottom of the mountain to see the sea",
+                "utterances": [
+                    {
+                        "text": "How to go down to the bottom of the mountain to see the sea",
+                    }
+                ],
+            },
+            transcript_metadata={"language_detected": "zh"},
+        ),
+        cover_frame_extractor=lambda source_video_path, output_dir: [cover],
+    )
+
+    assert draft.summary == "视频内容待确认"
+    assert draft.title_suggestions[0] == "视频内容待确认"
 
 
 def test_publish_draft_from_repository_persists_platform_results(tmp_path):

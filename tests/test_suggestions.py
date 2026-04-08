@@ -79,6 +79,10 @@ def test_video_skill_adapter_runs_review_only_pipeline(tmp_path, monkeypatch):
     assert "--output-root" in seen["command"]
     assert "--review-only" in seen["command"]
     assert "--overwrite" in seen["command"]
+    assert "--language" in seen["command"]
+    assert "zh" in seen["command"]
+    assert "--whisperkit-profile" in seen["command"]
+    assert "quality" in seen["command"]
 
 
 def test_video_skill_adapter_selects_latest_summary_when_stale_roots_exist(tmp_path, monkeypatch):
@@ -138,3 +142,76 @@ def test_build_suggestions_normalizes_noisy_text(tmp_path):
     assert "\n" not in bundle.title_suggestions[0]
     assert "\n" not in bundle.description_suggestions[0]
     assert len(bundle.summary) <= 56
+
+
+def test_build_suggestions_stays_content_neutral_for_general_video(tmp_path):
+    payload = {
+        "full_text": "今天和莉莉去海边看星星，顺便记录一路上的风景。",
+        "segments": [{"text": "今天和莉莉去海边看星星"}],
+    }
+
+    bundle = build_suggestions(
+        source_video_path=tmp_path / "demo.mp4",
+        transcript_payload=payload,
+    )
+
+    combined = " ".join(
+        [
+            *bundle.title_suggestions,
+            *bundle.description_suggestions,
+            *bundle.cover_suggestions,
+        ]
+    )
+
+    assert "多平台自动发布" not in combined
+    assert "一套流程发三端" not in combined
+    assert "视频分发" not in combined
+    assert bundle.title_suggestions[0] == "今天和莉莉去海边看星星"
+
+
+def test_build_suggestions_falls_back_when_transcript_metadata_disagrees(tmp_path):
+    payload = {
+        "text": "How to go down to the bottom of the mountain to see the sea",
+        "utterances": [
+            {
+                "text": "How to go down to the bottom of the mountain to see the sea",
+                "words": [
+                    {"text": "How", "confidence": 0.12},
+                    {"text": "sea", "confidence": 0.18},
+                ],
+            }
+        ],
+        "metadata": {"language_detected": "zh"},
+    }
+
+    bundle = build_suggestions(
+        source_video_path=tmp_path / "IMG_0040.MOV",
+        transcript_payload=payload,
+    )
+
+    assert bundle.summary == "视频内容待确认"
+    assert bundle.title_suggestions[0] == "视频内容待确认"
+    assert "How to go down" not in " ".join(bundle.title_suggestions)
+
+
+def test_build_suggestions_prefers_more_confident_segment_for_summary(tmp_path):
+    payload = {
+        "text": "如何日到我按地和下土 谁知盘中餐",
+        "utterances": [
+            {
+                "text": "如何日到我按地和下土",
+                "words": [{"text": "如何日到我按地和下土", "confidence": 0.44}],
+            },
+            {
+                "text": "谁知盘中餐",
+                "words": [{"text": "谁知盘中餐", "confidence": 0.83}],
+            },
+        ],
+    }
+
+    bundle = build_suggestions(
+        source_video_path=tmp_path / "demo.mp4",
+        transcript_payload=payload,
+    )
+
+    assert bundle.summary == "谁知盘中餐"

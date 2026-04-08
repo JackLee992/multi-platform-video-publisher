@@ -5,8 +5,16 @@ from pathlib import Path
 
 
 class VideoSkillAdapter:
-    def __init__(self, process_video_script: Path):
+    def __init__(
+        self,
+        process_video_script: Path,
+        *,
+        language: str = "zh",
+        whisperkit_profile: str = "quality",
+    ):
         self.process_video_script = Path(process_video_script)
+        self.language = language
+        self.whisperkit_profile = whisperkit_profile
 
     def run(self, source_video_path: Path, output_root: Path) -> dict:
         output_root = Path(output_root)
@@ -26,6 +34,10 @@ class VideoSkillAdapter:
             str(output_root),
             "--review-only",
             "--overwrite",
+            "--language",
+            self.language,
+            "--whisperkit-profile",
+            self.whisperkit_profile,
         ]
         completed = subprocess.run(
             command,
