@@ -4,6 +4,7 @@ import subprocess
 from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import PlatformName, PublishDraft
 from mvpublisher.publishers.chrome_current_session import (
+    _find_current_session_publish_script,
     run_current_session_publish_script,
 )
 
@@ -81,6 +82,26 @@ def test_run_current_session_publish_script_adds_skip_publish_for_autofill_only(
     assert "--skip-publish" in command
 
 
+def test_find_current_session_publish_script_falls_back_to_repo_root_when_installed(
+    monkeypatch,
+) -> None:
+    installed_module = Path(
+        "/tmp/venv/lib/python3.11/site-packages/mvpublisher/publishers/chrome_current_session.py"
+    )
+    repo_root = Path(__file__).resolve().parents[1]
+
+    monkeypatch.setattr(
+        "mvpublisher.publishers.chrome_current_session.__file__",
+        str(installed_module),
+    )
+    monkeypatch.chdir(repo_root)
+
+    script_path = _find_current_session_publish_script()
+
+    assert script_path == repo_root / "scripts" / "chrome_current_session_publish.sh"
+    assert script_path.exists()
+
+
 def test_current_session_script_ensures_platform_tab_exists() -> None:
     script_path = (
         Path(__file__).resolve().parents[1]
@@ -146,6 +167,7 @@ def test_current_session_script_handles_wechat_dialogs_and_current_placeholder()
     assert "handle_wechat_channels_dialogs()" in content
     assert "将此次编辑保留?" in content
     assert "概括视频主要内容，字数建议6-16个字符" in content
+    assert "你还不能发表视频" in content
 
 
 def test_current_session_script_supports_cover_and_description_fill_paths() -> None:
@@ -189,6 +211,20 @@ def test_current_session_script_verifies_wechat_cover_after_upload() -> None:
     assert "cover_verified" in content
 
 
+def test_current_session_script_waits_for_wechat_publish_ready() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "wait_for_wechat_channels_publish_ready()" in content
+    assert "上传中" in content
+    assert "处理中" in content
+    assert "生成中" in content
+
+
 def test_current_session_script_supports_douyin_cover_modal_flow() -> None:
     script_path = (
         Path(__file__).resolve().parents[1]
@@ -216,6 +252,18 @@ def test_current_session_script_verifies_douyin_cover_after_upload() -> None:
     assert "douyin_cover_verified" in content
 
 
+def test_current_session_script_dismisses_douyin_horizontal_cover_prompt() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "设置横封面获更多流量" in content
+    assert "暂不设置" in content
+
+
 def test_current_session_script_retries_video_fetch_with_localhost_fallback() -> None:
     script_path = (
         Path(__file__).resolve().parents[1]
@@ -227,6 +275,25 @@ def test_current_session_script_retries_video_fetch_with_localhost_fallback() ->
     assert "fetchAssetBlob" in content
     assert "http://localhost:${PORT}/' + name" in content
     assert "attempt <= 3" in content
+
+
+def test_current_session_script_starts_cors_enabled_asset_server() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    asset_server_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_asset_server.py"
+    )
+    content = script_path.read_text(encoding="utf-8")
+    asset_server_content = asset_server_path.read_text(encoding="utf-8")
+
+    assert "chrome_current_session_asset_server.py" in content
+    assert "python3 \"$ASSET_SERVER_SCRIPT\"" in content
+    assert "Access-Control-Allow-Origin" in asset_server_content
 
 
 def test_current_session_script_has_native_file_picker_fallback_for_video_upload() -> None:
@@ -252,3 +319,49 @@ def test_current_session_script_focuses_tabs_by_window_reference() -> None:
 
     assert "set matchedWindow to missing value" in content
     assert "set active tab index of matchedWindow" in content
+
+
+def test_current_session_script_targets_semantic_publish_button_for_xiaohongshu() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+    publish_section = content.split("publish_xiaohongshu() {", 1)[1].split(
+        "check_xiaohongshu_result() {", 1
+    )[0]
+
+    assert 'document.querySelectorAll(\'button\')' in publish_section
+    assert "trim() === '发布'" in publish_section
+    assert "button,div,span" not in publish_section
+
+
+def test_current_session_script_waits_for_xiaohongshu_publish_button_ready() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+    publish_section = content.split("publish_xiaohongshu() {", 1)[1].split(
+        "check_xiaohongshu_result() {", 1
+    )[0]
+
+    assert "repeat 25 times" in publish_section
+    assert "delay 1" in publish_section
+
+
+def test_current_session_script_keeps_douyin_applescript_return_unescaped() -> None:
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "chrome_current_session_publish.sh"
+    )
+    content = script_path.read_text(encoding="utf-8")
+    publish_section = content.split("publish_douyin() {", 1)[1].split(
+        "check_douyin_result() {", 1
+    )[0]
+
+    assert 'return "NOT_FOUND"' in publish_section
+    assert '\\"NOT_FOUND\\"' not in publish_section

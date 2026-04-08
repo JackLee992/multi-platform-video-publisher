@@ -45,6 +45,17 @@ class ValidationError(BaseModel):
     platforms: List[PlatformName] = Field(default_factory=list)
 
 
+class CodexDraftReview(BaseModel):
+    status: str = "pending"
+    content_summary: Optional[str] = None
+    refined_transcript: Optional[str] = None
+    recommended_title: Optional[str] = None
+    title_candidates: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    reviewed_at: Optional[datetime] = None
+
+
 class PlatformPublishRecord(BaseModel):
     platform_name: PlatformName
     status: str
@@ -89,6 +100,7 @@ class PublishDraft(BaseModel):
     selected_platforms: List[PlatformName] = Field(default_factory=list)
     platform_drafts: List[PlatformDraft] = Field(default_factory=list)
     publish_history: List[PublishHistoryEntry] = Field(default_factory=list)
+    codex_review: Optional[CodexDraftReview] = None
 
     @classmethod
     def new(cls, source_video_path: Path) -> "PublishDraft":

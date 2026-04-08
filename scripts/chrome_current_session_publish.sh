@@ -129,6 +129,7 @@ VIDEO_FILE="$(basename "$VIDEO_PATH")"
 COVER_FILE=""
 COVER_BASE64=""
 ASSET_DIR=""
+ASSET_SERVER_SCRIPT="$(cd "$(dirname "$0")" && pwd)/chrome_current_session_asset_server.py"
 
 ensure_server() {
   ASSET_DIR="$(mktemp -d /tmp/chrome-current-session-assets.XXXXXX)"
@@ -139,7 +140,7 @@ ensure_server() {
     ln -sf "$COVER_PATH" "$ASSET_DIR/$COVER_FILE"
   fi
   if ! lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-    python3 -m http.server "$PORT" --bind "$HOST" --directory "$ASSET_DIR" >/tmp/chrome-current-session-publish.log 2>&1 &
+    python3 "$ASSET_SERVER_SCRIPT" --host "$HOST" --port "$PORT" --directory "$ASSET_DIR" >/tmp/chrome-current-session-publish.log 2>&1 &
     SERVER_PID=$!
     sleep 1
   else
@@ -611,15 +612,18 @@ APPLESCRIPT
 publish_xiaohongshu() {
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
-        set marker to execute t javascript "(document.body && document.body.innerText || '').includes('发布') ? 'MATCH' : ''"
-        if marker is "MATCH" then
-          return execute t javascript "(() => { const btn = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === '发布'); if (!btn) return JSON.stringify({ok:false,error:'missing publish'}); btn.click(); return JSON.stringify({ok:true,text:btn.innerText,url:location.href}); })()"
+  repeat 25 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.xiaohongshu.com/publish/publish" then
+          set marker to execute t javascript "(() => { const btn = Array.from(document.querySelectorAll('button')).find(el => (el.innerText || '').trim() === '发布' && !el.disabled); return btn ? 'MATCH' : ''; })()"
+          if marker is "MATCH" then
+            return execute t javascript "(() => { const btn = Array.from(document.querySelectorAll('button')).find(el => (el.innerText || '').trim() === '发布' && !el.disabled); if (!btn) return JSON.stringify({ok:false,error:'missing publish'}); btn.click(); return JSON.stringify({ok:true,text:btn.innerText,url:location.href}); })()"
+          end if
         end if
-      end if
     end repeat
+    end repeat
+    delay 1
   end repeat
   return "NOT_FOUND"
 end tell
@@ -767,6 +771,26 @@ end tell
 APPLESCRIPT
 }
 
+dismiss_douyin_cover_prompt() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 15 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/upload" or (URL of t as text) starts with "https://creator.douyin.com/creator-micro/content/post/video" then
+          set js to "(() => { const bodyText = (document.body && document.body.innerText) || ''; const clickByExactText = (text) => { const target = Array.from(document.querySelectorAll('button,div,span')).find(el => (el.innerText || '').trim() === text); if (!target) return false; target.click(); return true; }; if (!bodyText.includes('设置横封面获更多流量')) return JSON.stringify({ok:true, action:'no_prompt'}); if (clickByExactText('暂不设置')) return JSON.stringify({ok:true, action:'dismissed_horizontal_cover_prompt'}); if (clickByExactText('完成')) return JSON.stringify({ok:true, action:'clicked_finish'}); return JSON.stringify({ok:false, error:'douyin_horizontal_cover_prompt_still_open'}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"ok\":true" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "{\"ok\":false,\"error\":\"douyin_horizontal_cover_prompt_still_open\"}"
+end tell
+APPLESCRIPT
+}
+
 publish_douyin() {
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
@@ -777,7 +801,7 @@ tell application "Google Chrome"
       end if
     end repeat
   end repeat
-  return \"NOT_FOUND\"
+  return "NOT_FOUND"
 end tell
 APPLESCRIPT
 }
@@ -942,6 +966,26 @@ end tell
 APPLESCRIPT
 }
 
+wait_for_wechat_channels_publish_ready() {
+  run_osascript <<'APPLESCRIPT'
+tell application "Google Chrome"
+  repeat 45 times
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t as text) starts with "https://channels.weixin.qq.com/platform/post/create" then
+          set js to "(() => { const root = document.querySelector('wujie-app')?.shadowRoot || document; const bodyText = ((root && root.innerText) || document.body?.innerText || ''); const publishButton = Array.from(root.querySelectorAll('button')).find(el => (el.innerText || '').trim() === '发表'); const blockedByProgress = bodyText.includes('上传中') || bodyText.includes('处理中') || bodyText.includes('生成中'); if (!publishButton) return JSON.stringify({ok:false, error:'missing publish'}); if (publishButton.disabled) return JSON.stringify({ok:false, error:'publish_disabled'}); if (blockedByProgress) return JSON.stringify({ok:false, error:'publish_blocked_by_progress'}); return JSON.stringify({ok:true, action:'publish_ready'}); })()"
+          set resultJson to execute t javascript js
+          if resultJson contains "\"action\":\"publish_ready\"" then return resultJson
+        end if
+      end repeat
+    end repeat
+    delay 1
+  end repeat
+  return "{\"ok\":false,\"error\":\"publish_not_ready\"}"
+end tell
+APPLESCRIPT
+}
+
 publish_wechat_channels() {
   run_osascript <<'APPLESCRIPT'
 tell application "Google Chrome"
@@ -1024,6 +1068,7 @@ run_platform() {
       apply_douyin_cover
       poll_douyin_cover
       verify_douyin_cover
+      dismiss_douyin_cover_prompt
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
         echo "[${platform_name}] publish_start"
         publish_douyin
@@ -1053,6 +1098,7 @@ run_platform() {
       apply_wechat_channels_cover
       poll_wechat_channels_cover
       verify_wechat_channels_cover
+      wait_for_wechat_channels_publish_ready
       if [[ "$SKIP_PUBLISH" == "false" ]]; then
         echo "[${platform_name}] publish_start"
         publish_wechat_channels

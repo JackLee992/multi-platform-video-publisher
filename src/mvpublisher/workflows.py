@@ -131,7 +131,22 @@ def _load_transcript_payload(pipeline_summary: dict) -> dict:
     if not transcript_path.exists():
         return {}
 
-    return json.loads(transcript_path.read_text(encoding="utf-8"))
+    payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return {}
+
+    transcript_meta_json = artifacts.get("transcript_meta_json")
+    if transcript_meta_json:
+        transcript_meta_path = Path(str(transcript_meta_json))
+        if transcript_meta_path.exists():
+            metadata_payload = json.loads(transcript_meta_path.read_text(encoding="utf-8"))
+            if isinstance(metadata_payload, dict):
+                existing_metadata = payload.get("metadata")
+                if not isinstance(existing_metadata, dict):
+                    existing_metadata = {}
+                payload["metadata"] = {**metadata_payload, **existing_metadata}
+
+    return payload
 
 
 def _coerce_optional_path(value: object) -> Optional[Path]:

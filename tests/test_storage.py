@@ -6,6 +6,7 @@ import pytest
 import json
 
 from mvpublisher.models.draft import (
+    CodexDraftReview,
     DraftApprovalStatus,
     PlatformDraft,
     PlatformName,
@@ -33,6 +34,30 @@ def test_repository_round_trip(tmp_path):
     assert loaded.approval_status == DraftApprovalStatus.DRAFT
     assert loaded.publish_mode == "manual_hold"
     assert loaded.keywords == []
+
+
+def test_repository_round_trip_preserves_codex_review(tmp_path):
+    drafts_root = tmp_path / "drafts"
+    repo = DraftRepository(drafts_root)
+    draft = PublishDraft.new(source_video_path=drafts_root / "demo.mp4").model_copy(
+        update={
+            "codex_review": CodexDraftReview(
+                status="reviewed",
+                content_summary="孩子在背古诗。",
+                refined_transcript="锄禾日当午，汗滴禾下土。",
+                recommended_title="孩子背诵《悯农》",
+                title_candidates=["孩子背诵《悯农》"],
+                notes=["已修正明显同音错字。"],
+            )
+        }
+    )
+
+    saved = repo.save(draft)
+    loaded = repo.load(saved.draft_id)
+
+    assert loaded.codex_review is not None
+    assert loaded.codex_review.content_summary == "孩子在背古诗。"
+    assert loaded.codex_review.recommended_title == "孩子背诵《悯农》"
 
 
 def test_repository_rejects_invalid_draft_id(tmp_path):

@@ -160,6 +160,12 @@ python -m playwright install chromium
 
 如果测试通过，再进入真实素材流程。
 
+如果你在真实平台联调时遇到“脚本能跑但结果不稳定”的问题，先看故障归档：
+
+- `docs/chrome-current-session-failure-archive.md`
+
+这份文档整理了已经踩过的注入上传、按钮点击、平台拦截层、权限不足等问题，以及各自的确认方法和修复边界。
+
 ## 标准使用流程
 
 ### 1. 准备视频

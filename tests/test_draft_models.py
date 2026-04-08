@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from mvpublisher.models.draft import (
+    CodexDraftReview,
     DraftApprovalStatus,
     PlatformDraft,
     PlatformName,
@@ -88,6 +89,7 @@ def test_publish_draft_requires_confirmation_fields():
     assert draft.selected_platforms == []
     assert draft.platform_drafts == []
     assert draft.publish_history == []
+    assert draft.codex_review is None
 
 
 def test_platform_draft_shape_contract():
@@ -138,6 +140,25 @@ def test_publish_draft_supports_validation_and_history_models(tmp_path):
     assert draft.publish_history[0].execution_mode is ExecutionMode.AUTOFILL_ONLY
     assert draft.publish_history[0].results[0].awaiting_manual_publish is True
     assert draft.publish_history[0].results[0].success_signal == "editor_ready"
+
+
+def test_publish_draft_supports_codex_review_payload(tmp_path):
+    draft = PublishDraft.new(source_video_path=tmp_path / "demo.mp4").model_copy(
+        update={
+            "codex_review": CodexDraftReview(
+                status="reviewed",
+                content_summary="孩子在背诵《悯农》并和镜头互动。",
+                refined_transcript="锄禾日当午，汗滴禾下土。谁知盘中餐，粒粒皆辛苦。来背！",
+                recommended_title="孩子背诵《悯农》",
+                title_candidates=["孩子背诵《悯农》", "莉莉背诗瞬间"],
+                notes=["原始转写存在同音错字，已按常见诗句修正。"],
+            )
+        }
+    )
+
+    assert draft.codex_review is not None
+    assert draft.codex_review.recommended_title == "孩子背诵《悯农》"
+    assert "莉莉背诗瞬间" in draft.codex_review.title_candidates
 
 
 def test_publish_draft_rejects_invalid_platform_drafts(tmp_path):

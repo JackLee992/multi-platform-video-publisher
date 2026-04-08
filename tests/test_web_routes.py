@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from mvpublisher.execution_modes import ExecutionMode
 from mvpublisher.models.draft import (
+    CodexDraftReview,
     DraftApprovalStatus,
     PlatformDraft,
     PlatformName,
@@ -44,6 +45,7 @@ def test_draft_detail_template_contains_expected_heading() -> None:
     assert "执行模式" in content
     assert "执行控制台" in content
     assert "保存并执行" in content
+    assert "Codex 预审" in content
     assert 'id="run-button"' in content
     assert 'id="run-log"' in content
 
@@ -65,8 +67,10 @@ def test_draft_detail_shows_real_draft_confirmation_fields(tmp_path, monkeypatch
     assert "发布历史" in response.text
     assert "执行控制台" in response.text
     assert "保存并执行" in response.text
+    assert "Codex 预审" in response.text
     assert draft.summary in response.text
     assert draft.title_suggestions[0] in response.text
+    assert "孩子背诵《悯农》" in response.text
 
 
 def test_run_endpoint_rejects_unapproved_draft(tmp_path, monkeypatch) -> None:
@@ -192,6 +196,34 @@ def test_approval_api_can_store_autofill_only_mode(tmp_path, monkeypatch) -> Non
     assert response.status_code == 200
     reloaded = repository.load(draft.draft_id)
     assert reloaded.execution_mode is ExecutionMode.AUTOFILL_ONLY
+
+
+def test_codex_review_api_persists_refined_copy_and_titles(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MVPUBLISHER_HOME", str(tmp_path / "runtime"))
+    repository = DraftRepository((tmp_path / "runtime") / "drafts")
+    draft = repository.save(_build_draft(tmp_path))
+    client = TestClient(create_app())
+
+    response = client.post(
+        f"/api/drafts/{draft.draft_id}/codex-review",
+        json={
+            "status": "reviewed",
+            "content_summary": "孩子在镜头前背诵《悯农》。",
+            "refined_transcript": "锄禾日当午，汗滴禾下土。谁知盘中餐，粒粒皆辛苦。来背！",
+            "recommended_title": "孩子背诵《悯农》",
+            "title_candidates": ["孩子背诵《悯农》", "莉莉背诗瞬间"],
+            "notes": ["原始转写存在同音错字，已按常见诗句修正。"],
+            "warnings": ["建议人工听一遍确认人名。"],
+        },
+    )
+
+    assert response.status_code == 200
+    reloaded = repository.load(draft.draft_id)
+    assert reloaded.summary == "孩子在镜头前背诵《悯农》。"
+    assert reloaded.title_suggestions[0] == "孩子背诵《悯农》"
+    assert reloaded.codex_review is not None
+    assert reloaded.codex_review.refined_transcript.startswith("锄禾日当午")
+    assert reloaded.codex_review.warnings == ["建议人工听一遍确认人名。"]
 
 
 def test_approval_api_reconciles_platform_drafts_with_selected_platforms(
@@ -328,5 +360,13 @@ def _build_draft(tmp_path: Path) -> PublishDraft:
             "cover_suggestions": ["多平台自动发布"],
             "cover_candidate_paths": [cover],
             "execution_mode": ExecutionMode.AUTOFILL_ONLY,
+            "codex_review": CodexDraftReview(
+                status="reviewed",
+                content_summary="孩子在镜头前背诵古诗。",
+                refined_transcript="锄禾日当午，汗滴禾下土。",
+                recommended_title="孩子背诵《悯农》",
+                title_candidates=["孩子背诵《悯农》", "莉莉背诗瞬间"],
+                notes=["已根据上下文修正明显错字。"],
+            ),
         }
     )
